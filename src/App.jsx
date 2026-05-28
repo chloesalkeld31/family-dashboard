@@ -114,14 +114,14 @@ export default function App() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     const [ja, dep, cc, fx, vx, td] = await Promise.all([
-      supabase.from('joint_account').select('*').single(),
+      supabase.from('joint_account').select('*').limit(1),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
       supabase.from('fixed_expenses').select('*').order('sort_order'),
       supabase.from('variable_expenses').select('*').order('sort_order'),
       supabase.from('todos').select('*').order('created_at'),
     ])
-    if (ja.data) { setJoint(parseFloat(ja.data.balance)); setJointId(ja.data.id) }
+    if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)); setJointId(ja.data[0].id) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
     if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), min_due: parseFloat(c.min_due), history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
     if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0)})))
