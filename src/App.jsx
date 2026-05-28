@@ -129,6 +129,13 @@ function CoverageBlock({ dueDate, amount, deposits, joint, otherBillsBefore = 0 
 
 // ── Main App ──────────────────────────────────────────────────
 export default function App() {
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+
   const [tab, setTab] = useState('finances')
   const [loading, setLoading] = useState(true)
   const [joint, setJoint] = useState(0)
@@ -143,6 +150,31 @@ export default function App() {
   const [customSpend, setCustomSpend] = useState('')
   const [openEdit, setOpenEdit] = useState(null)
   const [editVals, setEditVals] = useState({})
+
+  // ── Auth ──────────────────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setAuthLoading(false)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  async function handleLogin(e) {
+    e.preventDefault()
+    setLoginLoading(true)
+    setLoginError('')
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword })
+    if (error) setLoginError(error.message)
+    setLoginLoading(false)
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut()
+  }
 
   // ── Load all data ─────────────────────────────────────────
   const loadAll = useCallback(async (showSpinner = true) => {
@@ -395,6 +427,40 @@ export default function App() {
     setOpenEdit(p => p === key ? null : key)
   }
 
+  // Auth loading state
+  if (authLoading) return (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',flexDirection:'column',gap:12}}>
+      <div className="spinner"></div>
+    </div>
+  )
+
+  // Login screen
+  if (!session) return (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'var(--color-background-tertiary)'}}>
+      <div style={{background:'var(--color-background-primary)',border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-lg)',padding:'2rem 1.5rem',width:'100%',maxWidth:380,margin:'0 1rem'}}>
+        <div style={{textAlign:'center',marginBottom:'1.5rem'}}>
+          <div style={{fontSize:32,marginBottom:8}}>🏠</div>
+          <div style={{fontSize:20,fontWeight:500,color:'var(--color-text-primary)'}}>Family Dashboard</div>
+          <div style={{fontSize:13,color:'var(--color-text-secondary)',marginTop:4}}>Sign in to continue</div>
+        </div>
+        <form onSubmit={handleLogin}>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:'var(--color-text-secondary)',display:'block',marginBottom:6}}>Email</label>
+            <input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="your@email.com" required style={{width:'100%'}} />
+          </div>
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,color:'var(--color-text-secondary)',display:'block',marginBottom:6}}>Password</label>
+            <input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="••••••••" required style={{width:'100%'}} />
+          </div>
+          {loginError && <div style={{fontSize:13,color:'#D85A30',marginBottom:12,padding:'8px 10px',background:'#FCEBEB',borderRadius:'var(--border-radius-md)'}}>{loginError}</div>}
+          <button type="submit" className="save-btn" disabled={loginLoading} style={{opacity:loginLoading?0.6:1}}>
+            {loginLoading ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+
   if (loading) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',flexDirection:'column',gap:12}}>
       <div className="spinner"></div>
@@ -414,6 +480,9 @@ export default function App() {
             <i className={`ti ${icon}`} aria-hidden="true"></i>{label}
           </button>
         ))}
+        <button className="nav-btn" onClick={handleLogout} title="Sign out" style={{maxWidth:44}}>
+          <i className="ti ti-logout" aria-hidden="true"></i>
+        </button>
       </nav>
 
       {/* ── FINANCES ── */}
