@@ -138,7 +138,7 @@ export default function App() {
     ])
     if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
-    if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), statement_balance: c.statement_balance != null ? parseFloat(c.statement_balance) : parseFloat(c.balance), min_due: parseFloat(c.min_due), statement_close_day: c.statement_close_day ? parseInt(c.statement_close_day) : null, history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
+    if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), statement_balance: c.statement_balance != null ? parseFloat(c.statement_balance) : parseFloat(c.balance), statement_close_day: c.statement_close_day ? parseInt(c.statement_close_day) : null, history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
     if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0)})))
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
     if (td.data) setTodos(td.data)
@@ -235,7 +235,6 @@ export default function App() {
     const stmtBal = parseFloat(editVals[`cs_${card.id}`] ?? card.statement_balance)
     const closeDay = parseInt(editVals[`cc_${card.id}`] ?? card.statement_close_day)
     const day = parseInt(editVals[`cd_${card.id}`] ?? card.due_day)
-    const min = parseFloat(editVals[`cm_${card.id}`] ?? card.min_due)
     const h1 = parseFloat(editVals[`ch1_${card.id}`])
     const h2 = parseFloat(editVals[`ch2_${card.id}`])
     const h3 = parseFloat(editVals[`ch3_${card.id}`])
@@ -245,7 +244,6 @@ export default function App() {
       statement_balance: isNaN(stmtBal) ? card.statement_balance : stmtBal,
       statement_close_day: isNaN(closeDay) ? card.statement_close_day : closeDay,
       due_day: isNaN(day) ? card.due_day : day,
-      min_due: isNaN(min) ? card.min_due : min,
       history_1mo: isNaN(h1) ? card.history_1mo : h1,
       history_2mo: isNaN(h2) ? card.history_2mo : h2,
       history_3mo: isNaN(h3) ? card.history_3mo : h3,
@@ -477,14 +475,14 @@ export default function App() {
                     <div className="exp-meta">Statement closes {closeDateStr} · payment due {dueStr}</div></div>
                   <div style={{display:'flex',gap:6,alignItems:'center'}}>
                     <CountdownPill days={days} />
-                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`cn_${card.id}`]:card.name, [`cb_${card.id}`]:String(card.balance), [`cs_${card.id}`]:String(stmtBal), [`cc_${card.id}`]:String(card.statement_close_day??''), [`cd_${card.id}`]:String(card.due_day), [`cm_${card.id}`]:String(card.min_due), [`ch1_${card.id}`]:String(card.history_1mo??''), [`ch2_${card.id}`]:String(card.history_2mo??''), [`ch3_${card.id}`]:String(card.history_3mo??'')})); toggleEdit(`card_${card.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`cn_${card.id}`]:card.name, [`cb_${card.id}`]:String(card.balance), [`cs_${card.id}`]:String(stmtBal), [`cc_${card.id}`]:String(card.statement_close_day??''), [`cd_${card.id}`]:String(card.due_day), [`ch1_${card.id}`]:String(card.history_1mo??''), [`ch2_${card.id}`]:String(card.history_2mo??''), [`ch3_${card.id}`]:String(card.history_3mo??'')})); toggleEdit(`card_${card.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
                 <div className="detail-row"><span className="detail-label">Statement balance (amount due)</span><span className="detail-value" style={{fontSize:15}}>{fmt(stmtBal)}</span></div>
                 <div className="detail-row"><span className="detail-label">Current balance (incl. new charges)</span><span className="detail-value">{fmt(card.balance)}</span></div>
                 <div className="detail-row"><span className="detail-label">Remaining projected spend ({rr.daysToTarget}d × {fmtR(rr.dailyRate)}/d)</span><span className="detail-value" style={{color:'#BA7517'}}>+{fmt(rr.remainingSpend)}</span></div>
                 <div className="detail-row"><span className="detail-label">Projected balance at due date</span><span className="detail-value" style={{fontSize:15,fontWeight:500}}>{fmt(rr.projected)}</span></div>
-                <div className="detail-row"><span className="detail-label">Minimum due</span><span className="detail-value">{fmt(card.min_due)}</span></div>
+
                 {rr.avg > 0 && (
                   <div className="pace-bar-wrap">
                     <div className="pace-bar-label">
@@ -509,7 +507,7 @@ export default function App() {
                     <div className="edit-section-label">Dates</div>
                     <div className="edit-row"><label>Statement close day</label><input type="number" min="1" max="31" value={editVals[`cc_${card.id}`]??''} onChange={ev(`cc_${card.id}`)} /></div>
                     <div className="edit-row"><label>Due day of month</label><input type="number" min="1" max="31" value={editVals[`cd_${card.id}`]??''} onChange={ev(`cd_${card.id}`)} /></div>
-                    <div className="edit-row"><label>Minimum due ($)</label><input type="number" min="0" step="0.01" value={editVals[`cm_${card.id}`]??''} onChange={ev(`cm_${card.id}`)} /></div>
+
                     <div className="edit-section-label">Balances</div>
                     <div className="edit-row"><label>Statement balance ($)</label><input type="number" min="0" step="0.01" value={editVals[`cs_${card.id}`]??''} onChange={ev(`cs_${card.id}`)} /></div>
                     <div className="edit-row"><label>Current balance ($)</label><input type="number" min="0" step="0.01" value={editVals[`cb_${card.id}`]??''} onChange={ev(`cb_${card.id}`)} /></div>
