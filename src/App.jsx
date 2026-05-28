@@ -99,6 +99,7 @@ export default function App() {
   const [tab, setTab] = useState('finances')
   const [loading, setLoading] = useState(true)
   const [joint, setJoint] = useState(0)
+  const [jointId, setJointId] = useState(null)
   const [deposits, setDeposits] = useState([])
   const [cards, setCards] = useState([])
   const [fixed, setFixed] = useState([])
@@ -113,14 +114,14 @@ export default function App() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     const [ja, dep, cc, fx, vx, td] = await Promise.all([
-      supabase.from('joint_account').select('*').limit(1),
+      supabase.from('joint_account').select('*').single(),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
       supabase.from('fixed_expenses').select('*').order('sort_order'),
       supabase.from('variable_expenses').select('*').order('sort_order'),
       supabase.from('todos').select('*').order('created_at'),
     ])
-    if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
+    if (ja.data) { setJoint(parseFloat(ja.data.balance)); setJointId(ja.data.id) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
     if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), min_due: parseFloat(c.min_due), history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
     if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0)})))
@@ -166,7 +167,7 @@ export default function App() {
   async function saveJoint() {
     const v = parseFloat(editVals.joint)
     if (isNaN(v)) return
-    await supabase.from('joint_account').update({ balance: v, updated_at: new Date() }).not('id', 'is', null)
+    await supabase.from('joint_account').update({ balance: v, updated_at: new Date() }).eq('id', jointId)
     setOpenEdit(null)
   }
 
