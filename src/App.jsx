@@ -160,7 +160,9 @@ export default function App() {
   const totalFixedAndVar = fixed.reduce((s,f) => s + f.amount + (f.extra_payment||0), 0) +
     variable.reduce((s,v) => { const e = seasonalEstimate(v); return s + (v.current_bill != null ? v.current_bill : (e||0)) }, 0)
   const totalAllBills = totalProjectedCards + totalFixedAndVar
-  const leftover = joint + deposits.reduce((s,d)=>s+d.amount,0) - totalAllBills
+  const totalAllDeposits = deposits.reduce((s,d) => s+d.amount, 0)
+  const safeToSpendSimple = joint + totalAllDeposits - totalAllBills
+  const leftover = safeToSpendSimple
 
   // Per-card safe-to-spend: joint + deposits before close date − bills due before close date
   function nextCloseDate(card) {
@@ -328,38 +330,18 @@ export default function App() {
 
           {/* Safe to spend */}
           <div className="spend-card">
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div>
-                <div className="spend-label">Safe to spend before statement closes</div>
-                <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:2}}>joint balance + deposits − committed bills</div>
+                <div className="spend-label">Safe to spend this month</div>
+                <div className="spend-amount" style={{color:safeToSpendSimple>=200?'#1D9E75':safeToSpendSimple>=0?'#BA7517':'#D85A30'}}>
+                  {safeToSpendSimple<0?'-':''}{fmt(safeToSpendSimple)}
+                </div>
+                <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:2}}>after all bills &amp; card statements this month</div>
               </div>
-              <i className="ti ti-shopping-cart" style={{fontSize:28,color:'var(--color-text-secondary)'}} aria-hidden="true"></i>
+              <i className="ti ti-shopping-cart" style={{fontSize:28,color:'var(--color-text-secondary)',marginTop:4}} aria-hidden="true"></i>
             </div>
 
-            {cardSafeToSpend.map(({card, closeDate, depsBeforeClose, billsBefore, safe}) => {
-              const closeDateStr = closeDate.toLocaleDateString('en-US',{month:'short',day:'numeric'})
-              const daysToClose = daysUntil(closeDate)
-              const afterTrip = safe - plannedSpend
-              return (
-                <div key={card.id} style={{marginBottom:16,paddingBottom:16,borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8}}>
-                    <span style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)'}}>{card.name}</span>
-                    <span style={{fontSize:12,color:'var(--color-text-secondary)'}}>closes {closeDateStr} · {daysToClose}d away</span>
-                  </div>
-                  <div style={{fontSize:30,fontWeight:500,color:safe>=200?'#1D9E75':safe>=0?'#BA7517':'#D85A30',marginBottom:10}}>
-                    {safe<0?'-':''}{fmt(safe)}
-                  </div>
-                  <div className="spend-breakdown" style={{marginTop:0,borderTop:'none',paddingTop:0}}>
-                    <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(joint)}</span></div>
-                    {depsBeforeClose>0 && <div className="spend-line"><span>Deposits before close</span><span className="val-pos">+{fmt(depsBeforeClose)}</span></div>}
-                    <div className="spend-line"><span>Bills due before close</span><span className="val-neg">-{fmt(billsBefore)}</span></div>
-                    <div className="spend-line total"><span>Safe to spend</span><span style={{color:safe>=200?'#1D9E75':safe>=0?'#BA7517':'#D85A30'}}>{safe<0?'-':''}{fmt(safe)}</span></div>
-                  </div>
-                </div>
-              )
-            })}
-
-            <div className="store-tabs" style={{marginTop:4}}>
+            <div className="store-tabs" style={{marginTop:14}}>
               {[['grocery','ti-building-store','Grocery'],['costco','ti-box','Costco'],['custom','ti-pencil','Custom']].map(([s,icon,label]) => (
                 <button key={s} className={`store-tab ${store===s?'active':''}`} onClick={() => setStore(s)}>
                   <i className={`ti ${icon}`} aria-hidden="true"></i>{label}
@@ -372,19 +354,21 @@ export default function App() {
                 <input type="number" min="0" placeholder="e.g. 200" value={customSpend} onChange={e=>setCustomSpend(e.target.value)} style={{flex:1,fontSize:15,fontWeight:500}} />
               </div>
             )}
-            {cardSafeToSpend.map(({card, closeDate, safe}) => {
-              const afterTrip = safe - plannedSpend
-              const closeDateStr = closeDate.toLocaleDateString('en-US',{month:'short',day:'numeric'})
-              if (plannedSpend === 0 && store === 'custom') return null
-              return (
-                <div key={card.id} className={`coverage-row ${afterTrip>=0?'cov-good':'cov-bad'}`} style={{marginBottom:6}}>
-                  <span style={{fontSize:12,fontWeight:500,marginRight:6}}>{card.name}:</span>
-                  {afterTrip>=0
-                    ? `✓ Go for it — ${fmt(afterTrip)} left before ${closeDateStr}`
-                    : `✗ Over by ${fmt(Math.abs(afterTrip))} — keep it under ${fmt(safe)}`}
-                </div>
-              )
-            })}
+            {(plannedSpend > 0 || store !== 'custom') && (
+              <div className={`coverage-row ${safeToSpendSimple - plannedSpend >= 0 ? 'cov-good' : 'cov-bad'}`} style={{marginBottom:10}}>
+                {safeToSpendSimple - plannedSpend >= 0
+                  ? `✓ Go for it — ${fmt(safeToSpendSimple - plannedSpend)} left after this trip`
+                  : `✗ Over by ${fmt(Math.abs(safeToSpendSimple - plannedSpend))} — keep it under ${fmt(safeToSpendSimple)}`}
+              </div>
+            )}
+            <div className="spend-breakdown">
+              <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(joint)}</span></div>
+              <div className="spend-line"><span>All deposits this month</span><span className="val-pos">+{fmt(deposits.reduce((s,d)=>s+d.amount,0))}</span></div>
+              <div className="spend-line"><span>Card statement balances</span><span className="val-neg">-{fmt(totalProjectedCards)}</span></div>
+              <div className="spend-line"><span>Fixed &amp; variable bills</span><span className="val-neg">-{fmt(totalFixedAndVar)}</span></div>
+              <div className="spend-line total"><span>Safe to spend</span><span style={{color:safeToSpendSimple>=200?'#1D9E75':safeToSpendSimple>=0?'#BA7517':'#D85A30'}}>{safeToSpendSimple<0?'-':''}{fmt(safeToSpendSimple)}</span></div>
+            </div>
+          </div>
           </div>
 
           {/* Banner */}
