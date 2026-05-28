@@ -17,8 +17,7 @@ function nextOccurrence(day) {
 }
 function nextLastDay() {
   const lastOfThisMonth = new Date(yr, mo+1, 0)
-  // If today is within 4 days of end of month, the payment is imminent/paid — show next month
-  if (lastOfThisMonth - today <= 4 * 86400000) return new Date(yr, mo+2, 0)
+  if (lastOfThisMonth <= today) return new Date(yr, mo+2, 0)
   return lastOfThisMonth
 }
 function nextLastThursday() {
@@ -32,8 +31,8 @@ function getFixedDueDate(f) {
   if (f.due_type === 'day') return nextOccurrence(f.due_day)
   if (f.due_type === 'lastDay') {
     const lastOfThisMonth = new Date(yr, mo+1, 0)
-    // If paid this month, or within 4 days of end of month, show next month
-    if (f.paid_this_month || lastOfThisMonth - today <= 4 * 86400000) return new Date(yr, mo+2, 0)
+    if (f.paid_this_month) return new Date(yr, mo+2, 0)
+    if (lastOfThisMonth <= today) return new Date(yr, mo+2, 0)
     return lastOfThisMonth
   }
   return nextLastThursday()
@@ -103,7 +102,7 @@ function CoverageBlock({ dueDate, amount, deposits, joint, otherBillsBefore = 0 
     <div>
       <div className="detail-row" style={{borderBottom:'none',paddingBottom:0}}>
         <span className="detail-label">Projected joint balance at due date</span>
-        <span className="detail-value">{fmt(projectedBalance)}</span>
+        <span className="detail-value" style={{color: projectedBalance < 0 ? '#D85A30' : 'var(--color-text-primary)'}}>{projectedBalance < 0 ? '-' : ''}{fmt(projectedBalance)}</span>
       </div>
       <div className={`coverage-row ${surplus >= 0 ? 'cov-good' : 'cov-bad'}`}>
         {surplus >= 0 ? `✓ Covered — ${fmt(surplus)} to spare by ${dueStr}` : `✗ Short by ${fmt(Math.abs(surplus))} — add funds before ${dueStr}`}
@@ -421,7 +420,11 @@ export default function App() {
           {/* Deposits */}
           <div className="card">
             <div className="card-header"><span className="card-title" style={{marginBottom:0}}>Upcoming deposits</span></div>
-            {deposits.map((dep,i) => {
+            {[...deposits].sort((a,b) => {
+              let da = new Date(yr,mo,a.expected_day); if(da<=today) da=new Date(yr,mo+1,a.expected_day)
+              let db = new Date(yr,mo,b.expected_day); if(db<=today) db=new Date(yr,mo+1,b.expected_day)
+              return da - db
+            }).map((dep,i) => {
               let dd = new Date(yr,mo,dep.expected_day); if(dd<=today) dd=new Date(yr,mo+1,dep.expected_day)
               return (
                 <div key={dep.id}>
