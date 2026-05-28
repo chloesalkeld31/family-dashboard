@@ -4,6 +4,11 @@ import './App.css'
 
 const today = new Date(); today.setHours(0,0,0,0)
 const yr = today.getFullYear(), mo = today.getMonth(), todayDay = today.getDate()
+const daysLeftInMonth = new Date(yr, mo+1, 0).getDate() - todayDay
+// If fewer than 5 days left in the month, show next month as "this month"
+const displayMo = daysLeftInMonth < 5 ? mo + 1 : mo
+const displayYr = displayMo > 11 ? yr + 1 : yr
+const normDisplayMo = displayMo % 12
 const PACE_WARN = 0.20
 const STORES = { grocery: 150, costco: 300, custom: 0 }
 
@@ -423,7 +428,7 @@ export default function App() {
           {/* Monthly overview — this month + next month */}
           {[
             {
-              label: `${new Date(yr,mo,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (this month)`,
+              label: `${new Date(displayYr,normDisplayMo,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (this month)`,
               startBalance: joint,
               deposits: totalAllDeposits,
               cards: totalProjectedCards,
@@ -435,7 +440,7 @@ export default function App() {
               isThisMonth: true,
             },
             {
-              label: `${new Date(yr,mo+1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (next month)`,
+              label: `${new Date(displayYr,normDisplayMo+1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (next month)`,
               startBalance: Math.max(0, leftover),
               deposits: nextMonthDeposits,
               cards: nextMonthCards,
