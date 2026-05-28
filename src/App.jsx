@@ -369,7 +369,6 @@ export default function App() {
               <div className="spend-line total"><span>Safe to spend</span><span style={{color:safeToSpendSimple>=200?'#1D9E75':safeToSpendSimple>=0?'#BA7517':'#D85A30'}}>{safeToSpendSimple<0?'-':''}{fmt(safeToSpendSimple)}</span></div>
             </div>
           </div>
-          </div>
 
           {/* Banner */}
           <div className={`banner ${totalShortfall===0&&leftover>=0?'banner-good':totalShortfall>0?'banner-bad':'banner-warn'}`}>
