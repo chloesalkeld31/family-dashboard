@@ -99,7 +99,6 @@ export default function App() {
   const [tab, setTab] = useState('finances')
   const [loading, setLoading] = useState(true)
   const [joint, setJoint] = useState(0)
-  const [jointId, setJointId] = useState(null)
   const [deposits, setDeposits] = useState([])
   const [cards, setCards] = useState([])
   const [fixed, setFixed] = useState([])
@@ -114,14 +113,14 @@ export default function App() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     const [ja, dep, cc, fx, vx, td] = await Promise.all([
-      supabase.from('joint_account').select('*').single(),
+      supabase.from('joint_account').select('*').limit(1),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
       supabase.from('fixed_expenses').select('*').order('sort_order'),
       supabase.from('variable_expenses').select('*').order('sort_order'),
       supabase.from('todos').select('*').order('created_at'),
     ])
-    if (ja.data) { setJoint(parseFloat(ja.data.balance)); setJointId(ja.data.id) }
+    if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
     if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), min_due: parseFloat(c.min_due), history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
     if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0)})))
@@ -165,9 +164,9 @@ export default function App() {
 
   // ── Save helpers ──────────────────────────────────────────
   async function saveJoint() {
-    const v = parseFloat(editVals.joint)
+    const v = parseFloat(editVals.joint ?? joint)
     if (isNaN(v)) return
-    await supabase.from('joint_account').update({ balance: v, updated_at: new Date() }).eq('id', jointId)
+    await supabase.from('joint_account').update({ balance: v, updated_at: new Date() }).not('id', 'is', null)
     setOpenEdit(null)
   }
 
@@ -341,13 +340,13 @@ export default function App() {
           <div className="card">
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span className="card-title" style={{marginBottom:0}}>Joint account</span>
-              <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v,joint:joint})); toggleEdit('joint') }}>
+              <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v,joint:String(joint)})); toggleEdit('joint') }}>
                 <i className="ti ti-edit" aria-hidden="true"></i> Edit
               </button>
             </div>
             {openEdit==='joint' && (
               <div className="inline-edit open">
-                <div className="edit-row"><label>Current balance ($)</label><input type="number" min="0" defaultValue={joint} onChange={ev('joint')} /></div>
+                <div className="edit-row"><label>Current balance ($)</label><input type="number" min="0" value={editVals.joint??''} onChange={ev('joint')} /></div>
                 <button className="save-btn" onClick={saveJoint}>Save</button>
               </div>
             )}
@@ -367,13 +366,13 @@ export default function App() {
                     </div>
                     <div style={{display:'flex',gap:6,alignItems:'center'}}>
                       <span className="countdown-pill pill-ok">In {daysUntil(dd)}d</span>
-                      <button className="edit-btn" onClick={()=>toggleEdit(`dep_${dep.id}`)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                      <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`dep_day_${dep.id}`]:String(dep.expected_day), [`dep_amt_${dep.id}`]:String(dep.amount)})); toggleEdit(`dep_${dep.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                     </div>
                   </div>
                   {openEdit===`dep_${dep.id}` && (
                     <div className="inline-edit open">
-                      <div className="edit-row"><label>Expected day</label><input type="number" min="1" max="31" defaultValue={dep.expected_day} onChange={ev(`dep_day_${dep.id}`)} /></div>
-                      <div className="edit-row"><label>Amount ($)</label><input type="number" min="0" defaultValue={dep.amount} onChange={ev(`dep_amt_${dep.id}`)} /></div>
+                      <div className="edit-row"><label>Expected day</label><input type="number" min="1" max="31" value={editVals[`dep_day_${dep.id}`]??''} onChange={ev(`dep_day_${dep.id}`)} /></div>
+                      <div className="edit-row"><label>Amount ($)</label><input type="number" min="0" value={editVals[`dep_amt_${dep.id}`]??''} onChange={ev(`dep_amt_${dep.id}`)} /></div>
                       <button className="save-btn" onClick={()=>saveDeposit(dep)}>Save</button>
                     </div>
                   )}
@@ -398,7 +397,7 @@ export default function App() {
                     <div className="exp-meta">Due {dueStr} · {fmtR(rr.dailyRate)}/day avg</div></div>
                   <div style={{display:'flex',gap:6,alignItems:'center'}}>
                     <CountdownPill days={days} />
-                    <button className="edit-btn" onClick={()=>toggleEdit(`card_${card.id}`)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`cb_${card.id}`]:String(card.balance), [`cd_${card.id}`]:String(card.due_day), [`cm_${card.id}`]:String(card.min_due), [`ch1_${card.id}`]:String(card.history_1mo??''), [`ch2_${card.id}`]:String(card.history_2mo??''), [`ch3_${card.id}`]:String(card.history_3mo??'')})); toggleEdit(`card_${card.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
                 <div className="detail-row"><span className="detail-label">Current balance (actual)</span><span className="detail-value">{fmt(card.balance)}</span></div>
@@ -424,13 +423,13 @@ export default function App() {
                 <CoverageBlock dueDate={due} amount={rr.projected} deposits={deposits} joint={joint} />
                 {openEdit===`card_${card.id}` && (
                   <div className="inline-edit open">
-                    <div className="edit-row"><label>Current balance ($)</label><input type="number" min="0" step="0.01" defaultValue={card.balance} onChange={ev(`cb_${card.id}`)} /></div>
-                    <div className="edit-row"><label>Due day of month</label><input type="number" min="1" max="31" defaultValue={card.due_day} onChange={ev(`cd_${card.id}`)} /></div>
-                    <div className="edit-row"><label>Minimum due ($)</label><input type="number" min="0" step="0.01" defaultValue={card.min_due} onChange={ev(`cm_${card.id}`)} /></div>
+                    <div className="edit-row"><label>Current balance ($)</label><input type="number" min="0" step="0.01" value={editVals[`cb_${card.id}`]??''} onChange={ev(`cb_${card.id}`)} /></div>
+                    <div className="edit-row"><label>Due day of month</label><input type="number" min="1" max="31" value={editVals[`cd_${card.id}`]??''} onChange={ev(`cd_${card.id}`)} /></div>
+                    <div className="edit-row"><label>Minimum due ($)</label><input type="number" min="0" step="0.01" value={editVals[`cm_${card.id}`]??''} onChange={ev(`cm_${card.id}`)} /></div>
                     <div className="edit-section-label">Last 3 statement balances</div>
-                    <div className="edit-row"><label>1 month ago ($)</label><input type="number" min="0" step="0.01" defaultValue={card.history_1mo??''} onChange={ev(`ch1_${card.id}`)} /></div>
-                    <div className="edit-row"><label>2 months ago ($)</label><input type="number" min="0" step="0.01" defaultValue={card.history_2mo??''} onChange={ev(`ch2_${card.id}`)} /></div>
-                    <div className="edit-row"><label>3 months ago ($)</label><input type="number" min="0" step="0.01" defaultValue={card.history_3mo??''} onChange={ev(`ch3_${card.id}`)} /></div>
+                    <div className="edit-row"><label>1 month ago ($)</label><input type="number" min="0" step="0.01" value={editVals[`ch1_${card.id}`]??''} onChange={ev(`ch1_${card.id}`)} /></div>
+                    <div className="edit-row"><label>2 months ago ($)</label><input type="number" min="0" step="0.01" value={editVals[`ch2_${card.id}`]??''} onChange={ev(`ch2_${card.id}`)} /></div>
+                    <div className="edit-row"><label>3 months ago ($)</label><input type="number" min="0" step="0.01" value={editVals[`ch3_${card.id}`]??''} onChange={ev(`ch3_${card.id}`)} /></div>
                     <button className="save-btn" onClick={()=>saveCard(card)}>Save</button>
                   </div>
                 )}
@@ -452,7 +451,7 @@ export default function App() {
                     <div className="exp-meta">{dueLabel} · {dueStr}</div></div>
                   <div style={{display:'flex',gap:6}}>
                     <CountdownPill days={days} />
-                    <button className="edit-btn" onClick={()=>toggleEdit(`fixed_${f.id}`)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`fa_${f.id}`]:String(f.amount), [`fe_${f.id}`]:String(f.extra_payment||'')})); toggleEdit(`fixed_${f.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
                 <div className="detail-row"><span className="detail-label">Amount</span><span className="detail-value">{fmt(f.amount)}</span></div>
@@ -460,8 +459,8 @@ export default function App() {
                 <CoverageBlock dueDate={due} amount={totalAmt} deposits={deposits} joint={joint} />
                 {openEdit===`fixed_${f.id}` && (
                   <div className="inline-edit open">
-                    <div className="edit-row"><label>Amount ($)</label><input type="number" min="0" step="0.01" defaultValue={f.amount} onChange={ev(`fa_${f.id}`)} /></div>
-                    {f.name==='Mortgage' && <div className="edit-row"><label>Extra payment ($)</label><input type="number" min="0" step="1" defaultValue={f.extra_payment||''} placeholder="0" onChange={ev(`fe_${f.id}`)} /></div>}
+                    <div className="edit-row"><label>Amount ($)</label><input type="number" min="0" step="0.01" value={editVals[`fa_${f.id}`]??''} onChange={ev(`fa_${f.id}`)} /></div>
+                    {f.name==='Mortgage' && <div className="edit-row"><label>Extra payment ($)</label><input type="number" min="0" step="1" value={editVals[`fe_${f.id}`]??''} placeholder="0" onChange={ev(`fe_${f.id}`)} /></div>}
                     <button className="save-btn" onClick={()=>saveFixed(f)}>Save</button>
                   </div>
                 )}
@@ -471,25 +470,25 @@ export default function App() {
 
           {/* Variable expenses */}
           <div className="section-label">Variable expenses</div>
-          {variable.map(v => {
-            const est = seasonalEstimate(v)
-            const actual = v.current_bill
+          {variable.map(vx => {
+            const est = seasonalEstimate(vx)
+            const actual = vx.current_bill
             const diff = actual!=null && est!=null ? actual-est : null
             const flagged = diff!=null && Math.abs(diff)>50
-            const due = nextOccurrence(v.scheduled_day)
+            const due = nextOccurrence(vx.scheduled_day)
             const hardDue = nextLastDay()
             const days = daysUntil(due)
             const dueStr = due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const hardStr = hardDue.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const displayAmt = actual!=null ? actual : (est||0)
             return (
-              <div key={v.id} className="exp-card">
+              <div key={vx.id} className="exp-card">
                 <div className="exp-header">
-                  <div><div className="exp-name"><i className={`ti ${v.icon}`} aria-hidden="true"></i>{v.name}</div>
+                  <div><div className="exp-name"><i className={`ti ${vx.icon}`} aria-hidden="true"></i>{vx.name}</div>
                     <div className="exp-meta">Auto-pay {dueStr} · hard due {hardStr}</div></div>
                   <div style={{display:'flex',gap:6}}>
                     <CountdownPill days={days} />
-                    <button className="edit-btn" onClick={()=>toggleEdit(`var_${v.id}`)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`vb_${vx.id}`]:String(vx.current_bill??''), [`vlm_${vx.id}`]:String(vx.history[(mo+11)%12]??''), [`vly_${vx.id}`]:String(vx.history[mo]??'')})); toggleEdit(`var_${vx.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
                 <div className="detail-row"><span className="detail-label">Seasonal estimate</span><span className="detail-value">{est!=null?fmt(est):'No history'}</span></div>
@@ -500,12 +499,12 @@ export default function App() {
                     : <span className="flag-pill flag-ok">Within $50 of estimate</span>}
                 </div>
                 <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} />
-                {openEdit===`var_${v.id}` && (
+                {openEdit===`var_${vx.id}` && (
                   <div className="inline-edit open">
-                    <div className="edit-row"><label>This month's bill ($)</label><input type="number" min="0" step="0.01" defaultValue={actual??''} placeholder="Enter amount" onChange={ev(`vb_${v.id}`)} /></div>
-                    <div className="edit-row"><label>Last month ($)</label><input type="number" min="0" step="0.01" defaultValue={v.history[(mo+11)%12]??''} onChange={ev(`vlm_${v.id}`)} /></div>
-                    <div className="edit-row"><label>Same month last year ($)</label><input type="number" min="0" step="0.01" defaultValue={v.history[mo]??''} onChange={ev(`vly_${v.id}`)} /></div>
-                    <button className="save-btn" onClick={()=>saveVariable(v)}>Save</button>
+                    <div className="edit-row"><label>This month's bill ($)</label><input type="number" min="0" step="0.01" value={editVals[`vb_${vx.id}`]??''} placeholder="Enter amount" onChange={ev(`vb_${vx.id}`)} /></div>
+                    <div className="edit-row"><label>Last month ($)</label><input type="number" min="0" step="0.01" value={editVals[`vlm_${vx.id}`]??''} onChange={ev(`vlm_${vx.id}`)} /></div>
+                    <div className="edit-row"><label>Same month last year ($)</label><input type="number" min="0" step="0.01" value={editVals[`vly_${vx.id}`]??''} onChange={ev(`vly_${vx.id}`)} /></div>
+                    <button className="save-btn" onClick={()=>saveVariable(vx)}>Save</button>
                   </div>
                 )}
               </div>
