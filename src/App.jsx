@@ -132,6 +132,8 @@ export default function App() {
   const [fixed, setFixed] = useState([])
   const [variable, setVariable] = useState([])
   const [todos, setTodos] = useState([])
+  const [shoppingList, setShoppingList] = useState([])
+  const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
   const [openEdit, setOpenEdit] = useState(null)
@@ -140,13 +142,14 @@ export default function App() {
   // ── Load all data ─────────────────────────────────────────
   const loadAll = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true)
-    const [ja, dep, cc, fx, vx, td] = await Promise.all([
+    const [ja, dep, cc, fx, vx, td, sl] = await Promise.all([
       supabase.from('joint_account').select('*').limit(1),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
       supabase.from('fixed_expenses').select('*').order('sort_order'),
       supabase.from('variable_expenses').select('*').order('sort_order'),
       supabase.from('todos').select('*').order('created_at'),
+      supabase.from('shopping_lists').select('*').order('created_at'),
     ])
     if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
@@ -154,6 +157,7 @@ export default function App() {
     if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0), paid_this_month: f.paid_this_month || false})))
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
     if (td.data) setTodos(td.data)
+    if (sl.data) setShoppingList(sl.data)
     setLoading(false)
   }, [])
 
@@ -358,7 +362,30 @@ export default function App() {
     await loadAll(false)
   }
 
-  function ev(key) {
+  async function addShoppingItem() {
+    const text = editVals.new_shop_item?.trim()
+    if (!text) return
+    await supabase.from('shopping_lists').insert({ list: activeShoppingList, item: text, checked: false })
+    setEditVals(v => ({...v, new_shop_item: ''}))
+    await loadAll(false)
+  }
+
+  async function toggleShoppingItem(item) {
+    await supabase.from('shopping_lists').update({ checked: !item.checked, updated_at: new Date() }).eq('id', item.id)
+    await loadAll(false)
+  }
+
+  async function deleteShoppingItem(item) {
+    await supabase.from('shopping_lists').delete().eq('id', item.id)
+    await loadAll(false)
+  }
+
+  async function clearChecked() {
+    const checkedIds = shoppingList.filter(i => i.list === activeShoppingList && i.checked).map(i => i.id)
+    if (!checkedIds.length) return
+    await supabase.from('shopping_lists').delete().in('id', checkedIds)
+    await loadAll(false)
+  }
     return (e) => setEditVals(v => ({...v, [key]: e.target.value}))
   }
 
@@ -380,7 +407,7 @@ export default function App() {
     <div className="app">
       {/* NAV */}
       <nav className="nav">
-        {[['finances','ti-credit-card','Finances'],['todos','ti-checkbox','To-do'],['calendar','ti-calendar','Calendar']].map(([t,icon,label]) => (
+        {[['finances','ti-credit-card','Finances'],['todos','ti-checkbox','To-do'],['shopping','ti-shopping-cart','Lists'],['calendar','ti-calendar','Calendar']].map(([t,icon,label]) => (
           <button key={t} className={`nav-btn ${tab===t?'active':''}`} onClick={() => setTab(t)}>
             <i className={`ti ${icon}`} aria-hidden="true"></i>{label}
           </button>
@@ -394,21 +421,23 @@ export default function App() {
           {/* Monthly overview — this month + next month */}
           {[
             {
-              label: `${new Date(yr,mo,1).toLocaleDateString('en-US',{month:'long'})} (this month)`,
+              label: `${new Date(yr,mo,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (this month)`,
               startBalance: joint,
               deposits: totalAllDeposits,
               cards: totalProjectedCards,
-              cardsLabel: 'Card statements',
+              cardsRunRate: totalRunRateCards,
+              cardsLabel: 'Card statements (actual)',
               fixedVar: totalFixedAndVar,
               leftover: leftover,
               leftoverRR: leftoverRunRate,
               isThisMonth: true,
             },
             {
-              label: `${new Date(yr,mo+1,1).toLocaleDateString('en-US',{month:'long'})} (next month)`,
-              startBalance: nextMonthStart,
+              label: `${new Date(yr,mo+1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (next month)`,
+              startBalance: Math.max(0, leftover),
               deposits: nextMonthDeposits,
               cards: nextMonthCards,
+              cardsRunRate: nextMonthCards,
               cardsLabel: 'Est. card bills (3mo avg)',
               fixedVar: nextMonthBills,
               leftover: nextMonthLeftover,
@@ -424,19 +453,16 @@ export default function App() {
                   <div style={{fontSize:22,fontWeight:500,color:m.leftover>=200?'#1D9E75':m.leftover>=0?'#BA7517':'#D85A30'}}>{m.leftover<0?'-':''}{fmt(m.leftover)}</div>
                   {m.leftoverRR!==null && <div style={{fontSize:11,color:m.leftoverRR>=0?'var(--color-text-secondary)':'#D85A30',marginTop:3}}>{m.leftoverRR<0?'-':''}{fmt(m.leftoverRR)} w/ run-rate</div>}
                 </div>
-                {m.isThisMonth && (
-                  <div style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'12px'}}>
-                    <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:4}}>Joint now</div>
-                    <div style={{fontSize:22,fontWeight:500,color:'var(--color-text-primary)'}}>{fmt(m.startBalance)}</div>
-                  </div>
-                )}
+                <div style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'12px'}}>
+                  <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:4}}>{m.isThisMonth ? 'Joint now' : 'Starting balance'}</div>
+                  <div style={{fontSize:22,fontWeight:500,color:m.startBalance>=0?'var(--color-text-primary)':'#D85A30'}}>{m.startBalance<0?'-':''}{fmt(m.startBalance)}</div>
+                </div>
               </div>
               <div className="spend-breakdown" style={{marginTop:0}}>
-                {m.isThisMonth
-                  ? <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(m.startBalance)}</span></div>
-                  : <div className="spend-line"><span>Starting balance (this month's leftover)</span><span className={m.startBalance>0?'val-pos':'val-neg'}>{m.startBalance<0?'-':''}{fmt(m.startBalance)}</span></div>}
+                <div className="spend-line"><span>{m.isThisMonth?'Joint account now':'This month\'s leftover'}</span><span className={m.startBalance>=0?'val-pos':'val-neg'}>{m.startBalance<0?'-':''}{fmt(m.startBalance)}</span></div>
                 <div className="spend-line"><span>Deposits</span><span className="val-pos">+{fmt(m.deposits)}</span></div>
                 <div className="spend-line"><span>{m.cardsLabel}</span><span className="val-neg">-{fmt(m.cards)}</span></div>
+                {m.leftoverRR!==null && m.cardsRunRate !== m.cards && <div className="spend-line" style={{opacity:0.6,fontSize:12}}><span>↳ w/ run-rate</span><span className="val-neg">-{fmt(m.cardsRunRate)}</span></div>}
                 <div className="spend-line"><span>Fixed &amp; variable bills</span><span className="val-neg">-{fmt(m.fixedVar)}</span></div>
                 <div className="spend-line total"><span>Leftover</span><span style={{color:m.leftover>=200?'#1D9E75':m.leftover>=0?'#BA7517':'#D85A30'}}>{m.leftover<0?'-':''}{fmt(m.leftover)}</span></div>
               </div>
@@ -760,6 +786,81 @@ export default function App() {
                 <button className="status-cycle" onClick={()=>cycleTodoStatus(t)} aria-label="Cycle status"><i className="ti ti-refresh" aria-hidden="true"></i></button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── SHOPPING LISTS ── */}
+      {tab === 'shopping' && (
+        <div className="section">
+          <div className="store-tabs" style={{marginBottom:'1rem'}}>
+            {[['grocery','ti-building-store','Grocery'],['costco','ti-box','Costco']].map(([l,icon,label]) => (
+              <button key={l} className={`store-tab ${activeShoppingList===l?'active':''}`} onClick={()=>setActiveShoppingList(l)} style={{flex:1}}>
+                <i className={`ti ${icon}`} aria-hidden="true"></i>{label}
+              </button>
+            ))}
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title" style={{marginBottom:0,textTransform:'capitalize'}}>{activeShoppingList} list</span>
+              <div style={{display:'flex',gap:8}}>
+                {shoppingList.some(i=>i.list===activeShoppingList&&i.checked) && (
+                  <button className="edit-btn" onClick={clearChecked} style={{color:'#D85A30',borderColor:'#D85A30'}}>
+                    <i className="ti ti-trash" aria-hidden="true"></i> Clear checked
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Add item */}
+            <div style={{display:'flex',gap:8,marginBottom:12}}>
+              <input
+                type="text"
+                placeholder={`Add to ${activeShoppingList} list…`}
+                value={editVals.new_shop_item||''}
+                onChange={ev('new_shop_item')}
+                onKeyDown={e=>e.key==='Enter'&&addShoppingItem()}
+                style={{flex:1}}
+              />
+              <button className="save-btn" onClick={addShoppingItem} style={{width:'auto',padding:'6px 14px'}}>Add</button>
+            </div>
+
+            {/* List items */}
+            {shoppingList.filter(i=>i.list===activeShoppingList).length === 0
+              ? <div className="empty-state">Nothing on your {activeShoppingList} list yet</div>
+              : <>
+                  {/* Unchecked items */}
+                  {shoppingList.filter(i=>i.list===activeShoppingList&&!i.checked).map(item => (
+                    <div key={item.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                      <button onClick={()=>toggleShoppingItem(item)} style={{background:'none',border:'none',cursor:'pointer',padding:0,flexShrink:0,color:'var(--color-text-secondary)',fontSize:22}}>
+                        <i className="ti ti-circle" aria-hidden="true"></i>
+                      </button>
+                      <span style={{flex:1,fontSize:14,color:'var(--color-text-primary)'}}>{item.item}</span>
+                      <button onClick={()=>deleteShoppingItem(item)} style={{background:'none',border:'none',cursor:'pointer',padding:0,color:'var(--color-text-secondary)',fontSize:16,opacity:0.5}}>
+                        <i className="ti ti-x" aria-hidden="true"></i>
+                      </button>
+                    </div>
+                  ))}
+                  {/* Checked items */}
+                  {shoppingList.filter(i=>i.list===activeShoppingList&&i.checked).length > 0 && (
+                    <div style={{marginTop:8}}>
+                      <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',padding:'8px 0 4px'}}>In cart</div>
+                      {shoppingList.filter(i=>i.list===activeShoppingList&&i.checked).map(item => (
+                        <div key={item.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderBottom:'0.5px solid var(--color-border-tertiary)',opacity:0.5}}>
+                          <button onClick={()=>toggleShoppingItem(item)} style={{background:'none',border:'none',cursor:'pointer',padding:0,flexShrink:0,color:'#1D9E75',fontSize:22}}>
+                            <i className="ti ti-circle-check" aria-hidden="true"></i>
+                          </button>
+                          <span style={{flex:1,fontSize:14,color:'var(--color-text-secondary)',textDecoration:'line-through'}}>{item.item}</span>
+                          <button onClick={()=>deleteShoppingItem(item)} style={{background:'none',border:'none',cursor:'pointer',padding:0,color:'var(--color-text-secondary)',fontSize:16,opacity:0.5}}>
+                            <i className="ti ti-x" aria-hidden="true"></i>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+            }
           </div>
         </div>
       )}
