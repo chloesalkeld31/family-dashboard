@@ -104,7 +104,11 @@ function CoverageBlock({ dueDate, amount, deposits, joint, otherBillsBefore = 0 
         <span className="detail-label">Projected joint balance at due date</span>
         <span className="detail-value" style={{color: projectedBalance < 0 ? '#D85A30' : 'var(--color-text-primary)'}}>{projectedBalance < 0 ? '-' : ''}{fmt(projectedBalance)}</span>
       </div>
-      <div className={`coverage-row ${surplus >= 0 ? 'cov-good' : 'cov-bad'}`}>
+      <div className="detail-row" style={{borderBottom:'none',paddingBottom:0,marginTop:4}}>
+        <span className="detail-label">After paying this bill</span>
+        <span className="detail-value" style={{color: surplus >= 0 ? '#1D9E75' : '#D85A30', fontSize:15}}>{surplus < 0 ? '-' : '+'}{fmt(Math.abs(surplus))}</span>
+      </div>
+      <div className={`coverage-row ${surplus >= 0 ? 'cov-good' : 'cov-bad'}`} style={{marginTop:8}}>
         {surplus >= 0 ? `✓ Covered — ${fmt(surplus)} to spare by ${dueStr}` : `✗ Short by ${fmt(Math.abs(surplus))} — add funds before ${dueStr}`}
       </div>
       <div className="dep-note">
@@ -165,12 +169,43 @@ export default function App() {
 
   // ── Computed values ───────────────────────────────────────
   const totalProjectedCards = cards.reduce((s,c) => s + (c.statement_balance ?? c.balance), 0)
+  const totalRunRateCards = cards.reduce((s,c) => s + cardRunRate(c).projected, 0)
   const totalFixedAndVar = fixed.reduce((s,f) => s + f.amount + (f.extra_payment||0), 0) +
     variable.reduce((s,v) => { const e = seasonalEstimate(v); return s + (v.current_bill != null ? v.current_bill : (e||0)) }, 0)
   const totalAllBills = totalProjectedCards + totalFixedAndVar
+  const totalRunRateBills = totalRunRateCards + totalFixedAndVar
   const totalAllDeposits = deposits.reduce((s,d) => s+d.amount, 0)
   const safeToSpendSimple = joint + totalAllDeposits - totalAllBills
   const leftover = safeToSpendSimple
+  const leftoverRunRate = joint + totalAllDeposits - totalRunRateBills
+
+  // Upcoming bills sorted chronologically
+  const upcomingBills = [
+    ...cards.map(c => ({
+      name: c.name,
+      icon: 'ti-credit-card',
+      due: nextOccurrence(c.due_day),
+      amount: c.statement_balance ?? c.balance,
+      label: 'Statement balance'
+    })),
+    ...fixed.map(f => ({
+      name: f.name,
+      icon: f.icon,
+      due: getFixedDueDate(f),
+      amount: f.amount + (f.extra_payment||0),
+      label: f.due_type==='lastThursday'?'Last Thursday':f.due_type==='lastDay'?'Last day of month':`Day ${f.due_day}`
+    })),
+    ...variable.map(v => {
+      const e = seasonalEstimate(v)
+      return {
+        name: v.name,
+        icon: v.icon,
+        due: nextOccurrence(v.scheduled_day),
+        amount: v.current_bill != null ? v.current_bill : (e||0),
+        label: v.current_bill != null ? 'Actual bill' : 'Estimated'
+      }
+    })
+  ].sort((a,b) => a.due - b.due)
 
   // Per-card safe-to-spend: joint + deposits before close date − bills due before close date
   function nextCloseDate(card) {
@@ -391,13 +426,20 @@ export default function App() {
 
           <div className="metric-grid">
             <div className="metric"><div className="metric-label">Joint account now</div><div className="metric-value">{fmt(joint)}</div></div>
-            <div className="metric"><div className="metric-label">Total projected bills</div><div className="metric-value">{fmt(totalAllBills)}</div><div className="metric-sub">run-rate + all expenses</div></div>
+            <div className="metric">
+              <div className="metric-label">Total bills this month</div>
+              <div className="metric-value">{fmt(totalAllBills)}</div>
+              <div className="metric-sub">cards + fixed + variable</div>
+            </div>
           </div>
           <div className="metric-grid">
-            <div className="metric"><div className="metric-label">Total deposits</div><div className="metric-value">{fmt(deposits.reduce((s,d)=>s+d.amount,0))}</div></div>
-            <div className="metric"><div className="metric-label">Leftover after bills</div>
+            <div className="metric"><div className="metric-label">Total deposits</div><div className="metric-value">{fmt(totalAllDeposits)}</div></div>
+            <div className="metric">
+              <div className="metric-label">Leftover after bills</div>
               <div className="metric-value" style={{color:leftover>=500?'#1D9E75':leftover>=0?'#BA7517':'#D85A30'}}>{leftover<0?'-':''}{fmt(leftover)}</div>
-              <div className="metric-sub">{leftover>=500?'Extra mortgage possible':leftover>=0?'Tight — hold off':'Short this month'}</div>
+              <div className="metric-sub" style={{color:leftoverRunRate>=0?'var(--color-text-secondary)':'#D85A30'}}>
+                {leftoverRunRate<0?'-':''}{fmt(leftoverRunRate)} w/ run-rate
+              </div>
             </div>
           </div>
 
@@ -448,6 +490,35 @@ export default function App() {
                 </div>
               )
             })}
+          </div>
+
+          {/* Upcoming bills */}
+          <div className="card">
+            <div className="card-title">Upcoming bills</div>
+            {upcomingBills.map((bill, i) => {
+              const dueStr = bill.due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+              const days = daysUntil(bill.due)
+              const pillCls = days <= 5 ? 'pill-urgent' : days <= 10 ? 'pill-soon' : 'pill-ok'
+              return (
+                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 0',borderBottom:i<upcomingBills.length-1?'0.5px solid var(--color-border-tertiary)':'none'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <i className={`ti ${bill.icon}`} style={{fontSize:15,color:'var(--color-text-secondary)',flexShrink:0}} aria-hidden="true"></i>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)'}}>{bill.name}</div>
+                      <div style={{fontSize:12,color:'var(--color-text-secondary)'}}>{dueStr} · {bill.label}</div>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                    <span className={`countdown-pill ${pillCls}`}>In {days}d</span>
+                    <span style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)',minWidth:70,textAlign:'right'}}>{fmt(bill.amount)}</span>
+                  </div>
+                </div>
+              )
+            })}
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:13,fontWeight:500,paddingTop:10,marginTop:2,borderTop:'0.5px solid var(--color-border-tertiary)'}}>
+              <span style={{color:'var(--color-text-secondary)'}}>Total</span>
+              <span>{fmt(totalAllBills)}</span>
+            </div>
           </div>
 
           {/* Credit cards */}
