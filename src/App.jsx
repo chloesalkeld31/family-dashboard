@@ -178,6 +178,7 @@ export default function App() {
 
   // ── Load all data ─────────────────────────────────────────
   const loadAll = useCallback(async (showSpinner = true) => {
+    if (!session) return
     if (showSpinner) setLoading(true)
     const [ja, dep, cc, fx, vx, td, sl] = await Promise.all([
       supabase.from('joint_account').select('*').limit(1),
@@ -196,9 +197,9 @@ export default function App() {
     if (td.data) setTodos(td.data)
     if (sl.data) setShoppingList(sl.data)
     setLoading(false)
-  }, [])
+  }, [session])
 
-  useEffect(() => { loadAll() }, [loadAll])
+  useEffect(() => { if (session) loadAll() }, [session, loadAll])
 
   // ── Realtime sync ─────────────────────────────────────────
   useEffect(() => {
