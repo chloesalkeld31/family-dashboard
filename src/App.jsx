@@ -16,11 +16,10 @@ function nextOccurrence(day) {
   let d = new Date(yr, mo, day); if (d <= today) d = new Date(yr, mo+1, day); return d
 }
 function nextLastDay() {
-  // Always return the last day of the NEXT month from today,
-  // since "last day of month" bills are typically the upcoming one
   const lastOfThisMonth = new Date(yr, mo+1, 0)
-  if (lastOfThisMonth > today) return lastOfThisMonth
-  return new Date(yr, mo+2, 0)
+  // If today is within 4 days of end of month, the payment is imminent/paid — show next month
+  if (lastOfThisMonth - today <= 4 * 86400000) return new Date(yr, mo+2, 0)
+  return lastOfThisMonth
 }
 function nextLastThursday() {
   let d = lastThursdayOfMonth(yr, mo); if (d <= today) d = lastThursdayOfMonth(yr, mo+1); return d
@@ -31,7 +30,12 @@ function fmtR(n) { return '$' + Math.abs(n).toFixed(2) }
 
 function getFixedDueDate(f) {
   if (f.due_type === 'day') return nextOccurrence(f.due_day)
-  if (f.due_type === 'lastDay') return nextLastDay()
+  if (f.due_type === 'lastDay') {
+    const lastOfThisMonth = new Date(yr, mo+1, 0)
+    // If paid this month, or within 4 days of end of month, show next month
+    if (f.paid_this_month || lastOfThisMonth - today <= 4 * 86400000) return new Date(yr, mo+2, 0)
+    return lastOfThisMonth
+  }
   return nextLastThursday()
 }
 
@@ -144,7 +148,7 @@ export default function App() {
     if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
     if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), statement_balance: c.statement_balance != null ? parseFloat(c.statement_balance) : parseFloat(c.balance), statement_close_day: c.statement_close_day ? parseInt(c.statement_close_day) : null, history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
-    if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0)})))
+    if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0), paid_this_month: f.paid_this_month || false})))
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
     if (td.data) setTodos(td.data)
     setLoading(false)
@@ -257,6 +261,11 @@ export default function App() {
     const extra = parseFloat(editVals[`fe_${f.id}`] ?? f.extra_payment) || 0
     await supabase.from('fixed_expenses').update({ amount: isNaN(amt)?f.amount:amt, extra_payment: isNaN(extra)?0:extra, updated_at: new Date() }).eq('id', f.id)
     setOpenEdit(null)
+    await loadAll(false)
+  }
+
+  async function togglePaidThisMonth(f) {
+    await supabase.from('fixed_expenses').update({ paid_this_month: !f.paid_this_month, updated_at: new Date() }).eq('id', f.id)
     await loadAll(false)
   }
 
@@ -523,6 +532,15 @@ export default function App() {
                 </div>
                 <div className="detail-row"><span className="detail-label">Amount</span><span className="detail-value">{fmt(f.amount)}</span></div>
                 {f.name==='Mortgage' && <div className="detail-row"><span className="detail-label">Extra payment</span><span className="detail-value" style={{color:f.extra_payment>0?'#1D9E75':'var(--color-text-secondary)'}}>{f.extra_payment>0?fmt(f.extra_payment):'None'}</span></div>}
+                {f.name==='Mortgage' && (
+                  <div className="detail-row">
+                    <span className="detail-label">Paid this month</span>
+                    <button onClick={()=>togglePaidThisMonth(f)} style={{background:'none',border:'none',cursor:'pointer',display:'flex',alignItems:'center',gap:6,fontSize:13,fontWeight:500,color:f.paid_this_month?'#1D9E75':'var(--color-text-secondary)',padding:0}}>
+                      <i className={`ti ${f.paid_this_month?'ti-circle-check':'ti-circle'}`} style={{fontSize:18}} aria-hidden="true"></i>
+                      {f.paid_this_month ? 'Yes — showing next month' : 'No — mark as paid'}
+                    </button>
+                  </div>
+                )}
                 <CoverageBlock dueDate={due} amount={totalAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due)} />
                 {openEdit===`fixed_${f.id}` && (
                   <div className="inline-edit open">
