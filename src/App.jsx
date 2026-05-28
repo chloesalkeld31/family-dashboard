@@ -156,7 +156,7 @@ export default function App() {
   }, [loadAll])
 
   // ── Computed values ───────────────────────────────────────
-  const totalProjectedCards = cards.reduce((s,c) => s + cardRunRate(c).projected, 0)
+  const totalProjectedCards = cards.reduce((s,c) => s + (c.statement_balance ?? c.balance), 0)
   const totalFixedAndVar = fixed.reduce((s,f) => s + f.amount + (f.extra_payment||0), 0) +
     variable.reduce((s,v) => { const e = seasonalEstimate(v); return s + (v.current_bill != null ? v.current_bill : (e||0)) }, 0)
   const totalAllBills = totalProjectedCards + totalFixedAndVar
@@ -185,7 +185,7 @@ export default function App() {
     cards.forEach(c => {
       if (excludeCardId && c.id === excludeCardId) return
       const due = nextOccurrence(c.due_day)
-      if (due <= targetDate) total += cardRunRate(c).projected
+      if (due <= targetDate) total += c.statement_balance ?? c.balance
     })
     return total
   }
@@ -201,7 +201,7 @@ export default function App() {
   const plannedSpend = store === 'custom' ? (parseFloat(customSpend)||0) : STORES[store]
 
   const allItems = [
-    ...cards.map(c => ({ due: nextOccurrence(c.due_day), amount: cardRunRate(c).projected })),
+    ...cards.map(c => ({ due: nextOccurrence(c.due_day), amount: c.statement_balance ?? c.balance })),
     ...fixed.map(f => ({ due: getFixedDueDate(f), amount: f.amount + (f.extra_payment||0) })),
     ...variable.map(v => { const e = seasonalEstimate(v); return { due: nextOccurrence(v.scheduled_day), amount: v.current_bill != null ? v.current_bill : (e||0) } })
   ]
@@ -501,7 +501,7 @@ export default function App() {
                     {rr.paceOver && <div className="warn-note"><i className="ti ti-alert-triangle" style={{fontSize:12,flexShrink:0}} aria-hidden="true"></i> Spending {Math.round((rr.paceRatio-1)*100)}% faster than usual</div>}
                   </div>
                 )}
-                <CoverageBlock dueDate={due} amount={rr.projected} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, card.id)} />
+                <CoverageBlock dueDate={due} amount={stmtBal} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, card.id)} />
                 {openEdit===`card_${card.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-section-label">Card details</div>
