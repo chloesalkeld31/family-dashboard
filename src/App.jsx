@@ -87,24 +87,25 @@ function CountdownPill({ days }) {
 }
 
 function CoverageBlock({ dueDate, amount, deposits, joint, otherBillsBefore = 0 }) {
-  const proj = joint + depositsBeforeDue(deposits, dueDate) - otherBillsBefore
-  const surplus = proj - amount
-  const deps = depositsBeforeDue(deposits, dueDate)
+  const depsBeforeDue = depositsBeforeDue(deposits, dueDate)
+  const projectedBalance = joint + depsBeforeDue - otherBillsBefore
+  const surplus = projectedBalance - amount
   const dueStr = dueDate.toLocaleDateString('en-US', {month:'short', day:'numeric'})
   return (
     <div>
       <div className="detail-row" style={{borderBottom:'none',paddingBottom:0}}>
         <span className="detail-label">Projected joint balance at due date</span>
-        <span className="detail-value">{fmt(proj)}</span>
+        <span className="detail-value">{fmt(projectedBalance)}</span>
       </div>
       <div className={`coverage-row ${surplus >= 0 ? 'cov-good' : 'cov-bad'}`}>
         {surplus >= 0 ? `✓ Covered — ${fmt(surplus)} to spare by ${dueStr}` : `✗ Short by ${fmt(Math.abs(surplus))} — add funds before ${dueStr}`}
       </div>
       <div className="dep-note">
-        {deps > 0 && otherBillsBefore > 0 ? `↓ ${fmt(deps)} deposit · −${fmt(otherBillsBefore)} other bills before due date`
-          : deps > 0 ? `↓ Includes ${fmt(deps)} deposit before due date`
-          : otherBillsBefore > 0 ? `−${fmt(otherBillsBefore)} other bills due before this date`
-          : 'No deposits expected before this due date'}
+        {depsBeforeDue > 0 && otherBillsBefore > 0
+          ? `↓ ${fmt(depsBeforeDue)} deposit · −${fmt(otherBillsBefore)} other bills paid before this date`
+          : depsBeforeDue > 0 ? `↓ Includes ${fmt(depsBeforeDue)} deposit before due date`
+          : otherBillsBefore > 0 ? `−${fmt(otherBillsBefore)} other bills paid before this date`
+          : 'No deposits or earlier bills before this due date'}
       </div>
     </div>
   )
@@ -172,34 +173,25 @@ export default function App() {
     return d
   }
 
-  function billsDueBeforeDate(targetDate, excludeCardId = null, strict = false) {
+  function billsDueBeforeDate(targetDate, excludeCardId = null) {
     let total = 0
-    const compare = (due) => strict ? due < targetDate : due <= targetDate
     fixed.forEach(f => {
       const due = getFixedDueDate(f)
-      if (compare(due)) total += f.amount + (f.extra_payment||0)
+      if (due < targetDate) total += f.amount + (f.extra_payment||0)
     })
     variable.forEach(v => {
       const due = nextOccurrence(v.scheduled_day)
       const e = seasonalEstimate(v)
       const amt = v.current_bill != null ? v.current_bill : (e||0)
-      if (compare(due)) total += amt
+      if (due < targetDate) total += amt
     })
     cards.forEach(c => {
       if (excludeCardId && c.id === excludeCardId) return
       const due = nextOccurrence(c.due_day)
-      if (compare(due)) total += c.statement_balance ?? c.balance
+      if (due < targetDate) total += c.statement_balance ?? c.balance
     })
     return total
   }
-
-  const cardSafeToSpend = cards.map(card => {
-    const closeDate = nextCloseDate(card)
-    const depsBeforeClose = depositsBeforeDue(deposits, closeDate)
-    const billsBefore = billsDueBeforeDate(closeDate)
-    const safe = joint + depsBeforeClose - billsBefore
-    return { card, closeDate, depsBeforeClose, billsBefore, safe }
-  })
 
   const plannedSpend = store === 'custom' ? (parseFloat(customSpend)||0) : STORES[store]
 
@@ -483,7 +475,7 @@ export default function App() {
                     {rr.paceOver && <div className="warn-note"><i className="ti ti-alert-triangle" style={{fontSize:12,flexShrink:0}} aria-hidden="true"></i> Spending {Math.round((rr.paceRatio-1)*100)}% faster than usual</div>}
                   </div>
                 )}
-                <CoverageBlock dueDate={due} amount={stmtBal} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, card.id, true)} />
+                <CoverageBlock dueDate={due} amount={stmtBal} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, card.id)} />
                 {openEdit===`card_${card.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-section-label">Card details</div>
@@ -525,7 +517,7 @@ export default function App() {
                 </div>
                 <div className="detail-row"><span className="detail-label">Amount</span><span className="detail-value">{fmt(f.amount)}</span></div>
                 {f.name==='Mortgage' && <div className="detail-row"><span className="detail-label">Extra payment</span><span className="detail-value" style={{color:f.extra_payment>0?'#1D9E75':'var(--color-text-secondary)'}}>{f.extra_payment>0?fmt(f.extra_payment):'None'}</span></div>}
-                <CoverageBlock dueDate={due} amount={totalAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, null, true)} />
+                <CoverageBlock dueDate={due} amount={totalAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due)} />
                 {openEdit===`fixed_${f.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-row"><label>Amount ($)</label><input type="number" min="0" step="0.01" value={editVals[`fa_${f.id}`]??''} onChange={ev(`fa_${f.id}`)} /></div>
@@ -567,7 +559,7 @@ export default function App() {
                     : flagged ? <span className={`flag-pill ${diff>0?'flag-high':'flag-low'}`}>{diff>0?'↑':'↓'} {fmt(Math.abs(diff))} {diff>0?'above':'below'} est.</span>
                     : <span className="flag-pill flag-ok">Within $50 of estimate</span>}
                 </div>
-                <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, null, true)} />
+                <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due)} />
                 {openEdit===`var_${vx.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-row"><label>This month's bill ($)</label><input type="number" min="0" step="0.01" value={editVals[`vb_${vx.id}`]??''} placeholder="Enter amount" onChange={ev(`vb_${vx.id}`)} /></div>
