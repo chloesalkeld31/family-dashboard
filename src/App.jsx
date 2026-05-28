@@ -175,30 +175,9 @@ export default function App() {
   const totalAllBills = totalProjectedCards + totalFixedAndVar
   const totalRunRateBills = totalRunRateCards + totalFixedAndVar
   const totalAllDeposits = deposits.reduce((s,d) => s+d.amount, 0)
-  const leftover = joint + totalAllDeposits - totalAllBills
+  const safeToSpendSimple = joint + totalAllDeposits - totalAllBills
+  const leftover = safeToSpendSimple
   const leftoverRunRate = joint + totalAllDeposits - totalRunRateBills
-
-  // Next month estimates — same deposits, fixed bills only (no card estimate unless manually set)
-  const nextMonthDeposits = totalAllDeposits // same schedule next month
-  const nextMonthFixed = fixed.reduce((s,f) => s + f.amount, 0) // no extra payment assumed next month
-  const nextMonthVariable = variable.reduce((s,v) => {
-    // use seasonal estimate for next month's variable bills
-    const hist = typeof v.history === 'string' ? JSON.parse(v.history) : v.history
-    const nextMo = (mo+1)%12
-    const a = hist[(nextMo+11)%12], b = hist[nextMo]
-    const vals = [a,b].filter(x=>x!=null)
-    return s + (vals.length ? vals.reduce((s,x)=>s+x,0)/vals.length : 0)
-  }, 0)
-  // Starting balance next month = whatever's left after this month
-  const nextMonthStart = Math.max(0, leftover)
-  const nextMonthBills = nextMonthFixed + nextMonthVariable
-  // Cards next month: just use run-rate average as estimate
-  const nextMonthCards = cards.reduce((s,c) => {
-    const hist = [c.history_1mo, c.history_2mo, c.history_3mo].filter(v=>v!=null)
-    return s + (hist.length ? hist.reduce((a,b)=>a+b,0)/hist.length : c.statement_balance ?? c.balance)
-  }, 0)
-  const nextMonthTotalBills = nextMonthCards + nextMonthBills
-  const nextMonthLeftover = nextMonthStart + nextMonthDeposits - nextMonthTotalBills
 
   // Upcoming bills sorted chronologically
   const upcomingBills = [
@@ -391,62 +370,20 @@ export default function App() {
       {tab === 'finances' && (
         <div className="section">
 
-          {/* Monthly overview — this month + next month */}
-          {[
-            {
-              label: `${new Date(yr,mo,1).toLocaleDateString('en-US',{month:'long'})} (this month)`,
-              startBalance: joint,
-              deposits: totalAllDeposits,
-              cards: totalProjectedCards,
-              cardsLabel: 'Card statements',
-              fixedVar: totalFixedAndVar,
-              leftover: leftover,
-              leftoverRR: leftoverRunRate,
-              isThisMonth: true,
-            },
-            {
-              label: `${new Date(yr,mo+1,1).toLocaleDateString('en-US',{month:'long'})} (next month)`,
-              startBalance: nextMonthStart,
-              deposits: nextMonthDeposits,
-              cards: nextMonthCards,
-              cardsLabel: 'Est. card bills (3mo avg)',
-              fixedVar: nextMonthBills,
-              leftover: nextMonthLeftover,
-              leftoverRR: null,
-              isThisMonth: false,
-            }
-          ].map((m, i) => (
-            <div key={i} className="spend-card" style={{marginBottom:'0.75rem'}}>
-              <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:10}}>{m.label}</div>
-              <div style={{display:'flex',gap:10,marginBottom:12}}>
-                <div style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'12px'}}>
-                  <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:4}}>Leftover</div>
-                  <div style={{fontSize:22,fontWeight:500,color:m.leftover>=200?'#1D9E75':m.leftover>=0?'#BA7517':'#D85A30'}}>{m.leftover<0?'-':''}{fmt(m.leftover)}</div>
-                  {m.leftoverRR!==null && <div style={{fontSize:11,color:m.leftoverRR>=0?'var(--color-text-secondary)':'#D85A30',marginTop:3}}>{m.leftoverRR<0?'-':''}{fmt(m.leftoverRR)} w/ run-rate</div>}
-                </div>
-                {m.isThisMonth && (
-                  <div style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'12px'}}>
-                    <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:4}}>Joint now</div>
-                    <div style={{fontSize:22,fontWeight:500,color:'var(--color-text-primary)'}}>{fmt(m.startBalance)}</div>
-                  </div>
-                )}
-              </div>
-              <div className="spend-breakdown" style={{marginTop:0}}>
-                {m.isThisMonth
-                  ? <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(m.startBalance)}</span></div>
-                  : <div className="spend-line"><span>Starting balance (this month's leftover)</span><span className={m.startBalance>0?'val-pos':'val-neg'}>{m.startBalance<0?'-':''}{fmt(m.startBalance)}</span></div>}
-                <div className="spend-line"><span>Deposits</span><span className="val-pos">+{fmt(m.deposits)}</span></div>
-                <div className="spend-line"><span>{m.cardsLabel}</span><span className="val-neg">-{fmt(m.cards)}</span></div>
-                <div className="spend-line"><span>Fixed &amp; variable bills</span><span className="val-neg">-{fmt(m.fixedVar)}</span></div>
-                <div className="spend-line total"><span>Leftover</span><span style={{color:m.leftover>=200?'#1D9E75':m.leftover>=0?'#BA7517':'#D85A30'}}>{m.leftover<0?'-':''}{fmt(m.leftover)}</span></div>
-              </div>
-            </div>
-          ))}
-
-          {/* Grocery checker */}
+          {/* Safe to spend */}
           <div className="spend-card">
-            <div style={{fontSize:12,color:'var(--color-text-secondary)',marginBottom:10}}>Check a purchase against this month's leftover</div>
-            <div className="store-tabs" style={{marginTop:0}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+              <div>
+                <div className="spend-label">Safe to spend this month</div>
+                <div className="spend-amount" style={{color:safeToSpendSimple>=200?'#1D9E75':safeToSpendSimple>=0?'#BA7517':'#D85A30'}}>
+                  {safeToSpendSimple<0?'-':''}{fmt(safeToSpendSimple)}
+                </div>
+                <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:2}}>after all bills &amp; card statements this month</div>
+              </div>
+              <i className="ti ti-shopping-cart" style={{fontSize:28,color:'var(--color-text-secondary)',marginTop:4}} aria-hidden="true"></i>
+            </div>
+
+            <div className="store-tabs" style={{marginTop:14}}>
               {[['grocery','ti-building-store','Grocery'],['costco','ti-box','Costco'],['custom','ti-pencil','Custom']].map(([s,icon,label]) => (
                 <button key={s} className={`store-tab ${store===s?'active':''}`} onClick={() => setStore(s)}>
                   <i className={`ti ${icon}`} aria-hidden="true"></i>{label}
@@ -460,12 +397,19 @@ export default function App() {
               </div>
             )}
             {(plannedSpend > 0 || store !== 'custom') && (
-              <div className={`coverage-row ${leftover - plannedSpend >= 0 ? 'cov-good' : 'cov-bad'}`}>
-                {leftover - plannedSpend >= 0
-                  ? `✓ Go for it — ${fmt(leftover - plannedSpend)} left after this trip`
-                  : `✗ Over by ${fmt(Math.abs(leftover - plannedSpend))} — keep it under ${fmt(leftover)}`}
+              <div className={`coverage-row ${safeToSpendSimple - plannedSpend >= 0 ? 'cov-good' : 'cov-bad'}`} style={{marginBottom:10}}>
+                {safeToSpendSimple - plannedSpend >= 0
+                  ? `✓ Go for it — ${fmt(safeToSpendSimple - plannedSpend)} left after this trip`
+                  : `✗ Over by ${fmt(Math.abs(safeToSpendSimple - plannedSpend))} — keep it under ${fmt(safeToSpendSimple)}`}
               </div>
             )}
+            <div className="spend-breakdown">
+              <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(joint)}</span></div>
+              <div className="spend-line"><span>All deposits this month</span><span className="val-pos">+{fmt(deposits.reduce((s,d)=>s+d.amount,0))}</span></div>
+              <div className="spend-line"><span>Card statement balances</span><span className="val-neg">-{fmt(totalProjectedCards)}</span></div>
+              <div className="spend-line"><span>Fixed &amp; variable bills</span><span className="val-neg">-{fmt(totalFixedAndVar)}</span></div>
+              <div className="spend-line total"><span>Safe to spend</span><span style={{color:safeToSpendSimple>=200?'#1D9E75':safeToSpendSimple>=0?'#BA7517':'#D85A30'}}>{safeToSpendSimple<0?'-':''}{fmt(safeToSpendSimple)}</span></div>
+            </div>
           </div>
 
           {/* Banner */}
