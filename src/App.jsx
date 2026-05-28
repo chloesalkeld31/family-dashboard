@@ -753,7 +753,6 @@ export default function App() {
           {/* Variable expenses */}
           <div className="section-label">Variable expenses</div>
           {variable.map(vx => {
-            const hist = typeof vx.history === 'string' ? JSON.parse(vx.history) : vx.history
             const est = seasonalEstimate(vx)
             const actual = vx.current_bill
             const diff = actual!=null && est!=null ? actual-est : null
@@ -764,12 +763,6 @@ export default function App() {
             const dueStr = due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const hardStr = hardDue.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const displayAmt = actual!=null ? actual : (est||0)
-            // Next month seasonal estimate: avg of this month's bill (or estimate) + same month next year's history
-            const nextMo = (mo+1)%12
-            const nextMonthHistA = actual != null ? actual : (est||0) // this month's actual/est as "last month" for next month
-            const nextMonthHistB = hist[nextMo] // same month last year for next month
-            const nextMonthEstVals = [nextMonthHistA, nextMonthHistB].filter(x=>x!=null)
-            const nextMonthEst = nextMonthEstVals.length ? nextMonthEstVals.reduce((s,x)=>s+x,0)/nextMonthEstVals.length : null
             return (
               <div key={vx.id} className="exp-card">
                 <div className="exp-header">
@@ -780,19 +773,12 @@ export default function App() {
                     <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`vb_${vx.id}`]:String(vx.current_bill??''), [`vd_${vx.id}`]:String(vx.scheduled_day), [`vlm_${vx.id}`]:String(vx.history[(mo+11)%12]??''), [`vly_${vx.id}`]:String(vx.history[mo]??'')})); toggleEdit(`var_${vx.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
-                <div className="detail-row"><span className="detail-label">Seasonal estimate (this month)</span><span className="detail-value">{est!=null?fmt(est):'No history'}</span></div>
+                <div className="detail-row"><span className="detail-label">Seasonal estimate</span><span className="detail-value">{est!=null?fmt(est):'No history'}</span></div>
                 <div className="detail-row"><span className="detail-label">This month's bill</span><span className="detail-value">{actual!=null?fmt(actual):'Not entered'}</span></div>
                 <div style={{margin:'8px 0 4px'}}>
                   {actual==null ? <span className="flag-pill flag-missing">Estimated — enter actual bill</span>
                     : flagged ? <span className={`flag-pill ${diff>0?'flag-high':'flag-low'}`}>{diff>0?'↑':'↓'} {fmt(Math.abs(diff))} {diff>0?'above':'below'} est.</span>
                     : <span className="flag-pill flag-ok">Within $50 of estimate</span>}
-                </div>
-                <div className="detail-row" style={{marginTop:8,paddingTop:8,borderTop:'0.5px solid var(--color-border-tertiary)'}}>
-                  <span className="detail-label" style={{color:'#185FA5'}}>
-                    <i className="ti ti-calendar-forward" style={{fontSize:13,verticalAlign:-1,marginRight:4}} aria-hidden="true"></i>
-                    Next month estimate
-                  </span>
-                  <span className="detail-value" style={{color:'#185FA5'}}>{nextMonthEst!=null?fmt(nextMonthEst):'No data'}</span>
                 </div>
                 <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due)} />
                 {openEdit===`var_${vx.id}` && (
