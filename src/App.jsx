@@ -386,6 +386,8 @@ export default function App() {
     await supabase.from('shopping_lists').delete().in('id', checkedIds)
     await loadAll(false)
   }
+
+  function ev(key) {
     return (e) => setEditVals(v => ({...v, [key]: e.target.value}))
   }
 
