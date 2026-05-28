@@ -169,22 +169,19 @@ export default function App() {
 
   function billsDueBeforeDate(targetDate) {
     let total = 0
-    // fixed expenses due before target
     fixed.forEach(f => {
       const due = getFixedDueDate(f)
       if (due <= targetDate) total += f.amount + (f.extra_payment||0)
     })
-    // variable expenses due before target
     variable.forEach(v => {
       const due = nextOccurrence(v.scheduled_day)
       const e = seasonalEstimate(v)
       const amt = v.current_bill != null ? v.current_bill : (e||0)
       if (due <= targetDate) total += amt
     })
-    // card statement balances due before target (other cards' payments)
     cards.forEach(c => {
       const due = nextOccurrence(c.due_day)
-      if (due <= targetDate) total += c.statement_balance ?? c.balance
+      if (due <= targetDate) total += cardRunRate(c).projected
     })
     return total
   }
@@ -463,6 +460,8 @@ export default function App() {
             const due = nextOccurrence(card.due_day)
             const days = daysUntil(due)
             const dueStr = due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+            const closeDate = nextCloseDate(card)
+            const closeDateStr = closeDate.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const rr = cardRunRate(card)
             const pctElapsed = Math.min(100, Math.round((rr.daysElapsed/30)*100))
             const pctBalance = rr.avg>0 ? Math.min(130, Math.round((card.balance/rr.avg)*100)) : 0
@@ -471,13 +470,12 @@ export default function App() {
               <div key={card.id} className="exp-card">
                 <div className="exp-header">
                   <div><div className="exp-name"><i className="ti ti-credit-card" aria-hidden="true"></i>{card.name}</div>
-                    <div className="exp-meta">Due {dueStr} · {fmtR(rr.dailyRate)}/day avg</div></div>
+                    <div className="exp-meta">Statement closes {closeDateStr} · payment due {dueStr}</div></div>
                   <div style={{display:'flex',gap:6,alignItems:'center'}}>
                     <CountdownPill days={days} />
                     <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`cn_${card.id}`]:card.name, [`cb_${card.id}`]:String(card.balance), [`cs_${card.id}`]:String(stmtBal), [`cc_${card.id}`]:String(card.statement_close_day??''), [`cd_${card.id}`]:String(card.due_day), [`cm_${card.id}`]:String(card.min_due), [`ch1_${card.id}`]:String(card.history_1mo??''), [`ch2_${card.id}`]:String(card.history_2mo??''), [`ch3_${card.id}`]:String(card.history_3mo??'')})); toggleEdit(`card_${card.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
-                <div className="detail-row"><span className="detail-label">Statement cycle</span><span className="detail-value">{card.statement_close_day ? `Closes day ${card.statement_close_day} · day ${rr.daysElapsed} of ${rr.cycleLength}` : 'Close day not set'}</span></div>
                 <div className="detail-row"><span className="detail-label">Statement balance (amount due)</span><span className="detail-value" style={{fontSize:15}}>{fmt(stmtBal)}</span></div>
                 <div className="detail-row"><span className="detail-label">Current balance (incl. new charges)</span><span className="detail-value">{fmt(card.balance)}</span></div>
                 <div className="detail-row"><span className="detail-label">Remaining projected spend ({rr.daysToTarget}d × {fmtR(rr.dailyRate)}/d)</span><span className="detail-value" style={{color:'#BA7517'}}>+{fmt(rr.remainingSpend)}</span></div>
