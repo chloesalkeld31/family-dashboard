@@ -86,22 +86,25 @@ function CountdownPill({ days }) {
   return <span className={`countdown-pill ${cls}`}>Due in {days}d</span>
 }
 
-function CoverageBlock({ dueDate, amount, deposits, joint }) {
-  const proj = joint + depositsBeforeDue(deposits, dueDate)
+function CoverageBlock({ dueDate, amount, deposits, joint, otherBillsBefore = 0 }) {
+  const proj = joint + depositsBeforeDue(deposits, dueDate) - otherBillsBefore
   const surplus = proj - amount
   const deps = depositsBeforeDue(deposits, dueDate)
   const dueStr = dueDate.toLocaleDateString('en-US', {month:'short', day:'numeric'})
   return (
     <div>
       <div className="detail-row" style={{borderBottom:'none',paddingBottom:0}}>
-        <span className="detail-label">Projected joint balance</span>
+        <span className="detail-label">Projected joint balance at due date</span>
         <span className="detail-value">{fmt(proj)}</span>
       </div>
       <div className={`coverage-row ${surplus >= 0 ? 'cov-good' : 'cov-bad'}`}>
         {surplus >= 0 ? `✓ Covered — ${fmt(surplus)} to spare by ${dueStr}` : `✗ Short by ${fmt(Math.abs(surplus))} — add funds before ${dueStr}`}
       </div>
       <div className="dep-note">
-        {deps > 0 ? `↓ Includes ${fmt(deps)} deposit before due date` : 'No deposits expected before this due date'}
+        {deps > 0 && otherBillsBefore > 0 ? `↓ ${fmt(deps)} deposit · −${fmt(otherBillsBefore)} other bills before due date`
+          : deps > 0 ? `↓ Includes ${fmt(deps)} deposit before due date`
+          : otherBillsBefore > 0 ? `−${fmt(otherBillsBefore)} other bills due before this date`
+          : 'No deposits expected before this due date'}
       </div>
     </div>
   )
@@ -167,7 +170,7 @@ export default function App() {
     return d
   }
 
-  function billsDueBeforeDate(targetDate) {
+  function billsDueBeforeDate(targetDate, excludeCardId = null) {
     let total = 0
     fixed.forEach(f => {
       const due = getFixedDueDate(f)
@@ -180,6 +183,7 @@ export default function App() {
       if (due <= targetDate) total += amt
     })
     cards.forEach(c => {
+      if (excludeCardId && c.id === excludeCardId) return
       const due = nextOccurrence(c.due_day)
       if (due <= targetDate) total += cardRunRate(c).projected
     })
@@ -497,7 +501,7 @@ export default function App() {
                     {rr.paceOver && <div className="warn-note"><i className="ti ti-alert-triangle" style={{fontSize:12,flexShrink:0}} aria-hidden="true"></i> Spending {Math.round((rr.paceRatio-1)*100)}% faster than usual</div>}
                   </div>
                 )}
-                <CoverageBlock dueDate={due} amount={rr.projected} deposits={deposits} joint={joint} />
+                <CoverageBlock dueDate={due} amount={rr.projected} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, card.id)} />
                 {openEdit===`card_${card.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-section-label">Card details</div>
@@ -539,7 +543,7 @@ export default function App() {
                 </div>
                 <div className="detail-row"><span className="detail-label">Amount</span><span className="detail-value">{fmt(f.amount)}</span></div>
                 {f.name==='Mortgage' && <div className="detail-row"><span className="detail-label">Extra payment</span><span className="detail-value" style={{color:f.extra_payment>0?'#1D9E75':'var(--color-text-secondary)'}}>{f.extra_payment>0?fmt(f.extra_payment):'None'}</span></div>}
-                <CoverageBlock dueDate={due} amount={totalAmt} deposits={deposits} joint={joint} />
+                <CoverageBlock dueDate={due} amount={totalAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, null) - totalAmt} />
                 {openEdit===`fixed_${f.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-row"><label>Amount ($)</label><input type="number" min="0" step="0.01" value={editVals[`fa_${f.id}`]??''} onChange={ev(`fa_${f.id}`)} /></div>
@@ -581,7 +585,7 @@ export default function App() {
                     : flagged ? <span className={`flag-pill ${diff>0?'flag-high':'flag-low'}`}>{diff>0?'↑':'↓'} {fmt(Math.abs(diff))} {diff>0?'above':'below'} est.</span>
                     : <span className="flag-pill flag-ok">Within $50 of estimate</span>}
                 </div>
-                <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} />
+                <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, null) - displayAmt} />
                 {openEdit===`var_${vx.id}` && (
                   <div className="inline-edit open">
                     <div className="edit-row"><label>This month's bill ($)</label><input type="number" min="0" step="0.01" value={editVals[`vb_${vx.id}`]??''} placeholder="Enter amount" onChange={ev(`vb_${vx.id}`)} /></div>
