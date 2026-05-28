@@ -543,7 +543,7 @@ export default function App() {
             const diff = actual!=null && est!=null ? actual-est : null
             const flagged = diff!=null && Math.abs(diff)>50
             const due = nextOccurrence(vx.scheduled_day)
-            const hardDue = nextLastDay()
+            const hardDue = new Date(due.getFullYear(), due.getMonth()+1, 0)
             const days = daysUntil(due)
             const dueStr = due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const hardStr = hardDue.toLocaleDateString('en-US',{month:'short',day:'numeric'})
