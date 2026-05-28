@@ -157,9 +157,47 @@ export default function App() {
   const totalFixedAndVar = fixed.reduce((s,f) => s + f.amount + (f.extra_payment||0), 0) +
     variable.reduce((s,v) => { const e = seasonalEstimate(v); return s + (v.current_bill != null ? v.current_bill : (e||0)) }, 0)
   const totalAllBills = totalProjectedCards + totalFixedAndVar
-  const remainingDeps = deposits.reduce((s,d) => { let dd = new Date(yr,mo,d.expected_day); if(dd<=today) dd=new Date(yr,mo+1,d.expected_day); return s+d.amount }, 0)
-  const safeToSpend = joint + remainingDeps - totalAllBills
   const leftover = joint + deposits.reduce((s,d)=>s+d.amount,0) - totalAllBills
+
+  // Per-card safe-to-spend: joint + deposits before close date − bills due before close date
+  function nextCloseDate(card) {
+    const closeDay = card.statement_close_day || 1
+    let d = new Date(yr, mo, closeDay)
+    if (d <= today) d = new Date(yr, mo+1, closeDay)
+    return d
+  }
+
+  function billsDueBeforeDate(targetDate) {
+    let total = 0
+    // fixed expenses due before target
+    fixed.forEach(f => {
+      const due = getFixedDueDate(f)
+      if (due <= targetDate) total += f.amount + (f.extra_payment||0)
+    })
+    // variable expenses due before target
+    variable.forEach(v => {
+      const due = nextOccurrence(v.scheduled_day)
+      const e = seasonalEstimate(v)
+      const amt = v.current_bill != null ? v.current_bill : (e||0)
+      if (due <= targetDate) total += amt
+    })
+    // card statement balances due before target (other cards' payments)
+    cards.forEach(c => {
+      const due = nextOccurrence(c.due_day)
+      if (due <= targetDate) total += c.statement_balance ?? c.balance
+    })
+    return total
+  }
+
+  const cardSafeToSpend = cards.map(card => {
+    const closeDate = nextCloseDate(card)
+    const depsBeforeClose = depositsBeforeDue(deposits, closeDate)
+    const billsBefore = billsDueBeforeDate(closeDate)
+    const safe = joint + depsBeforeClose - billsBefore
+    return { card, closeDate, depsBeforeClose, billsBefore, safe }
+  })
+
+  const plannedSpend = store === 'custom' ? (parseFloat(customSpend)||0) : STORES[store]
 
   const allItems = [
     ...cards.map(c => ({ due: nextOccurrence(c.due_day), amount: cardRunRate(c).projected })),
@@ -171,9 +209,6 @@ export default function App() {
     const surplus = proj - item.amount
     return surplus < 0 ? s + Math.abs(surplus) : s
   }, 0)
-
-  const plannedSpend = store === 'custom' ? (parseFloat(customSpend)||0) : STORES[store]
-  const afterTrip = safeToSpend - plannedSpend
 
   // ── Save helpers ──────────────────────────────────────────
   async function saveJoint() {
@@ -294,28 +329,43 @@ export default function App() {
 
           {/* Safe to spend */}
           <div className="spend-card">
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
               <div>
-                <div className="spend-label">Safe to spend right now</div>
-                <div className="spend-amount" style={{color: safeToSpend>=200?'#1D9E75':safeToSpend>=0?'#BA7517':'#D85A30'}}>
-                  {safeToSpend<0?'-':''}{fmt(safeToSpend)}
-                </div>
-                <div style={{fontSize:12,color:'var(--color-text-secondary)'}}>using run-rate projections to each due date</div>
+                <div className="spend-label">Safe to spend before statement closes</div>
+                <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:2}}>joint balance + deposits − committed bills</div>
               </div>
-              <i className="ti ti-shopping-cart" style={{fontSize:28,color:'var(--color-text-secondary)',marginTop:4}} aria-hidden="true"></i>
+              <i className="ti ti-shopping-cart" style={{fontSize:28,color:'var(--color-text-secondary)'}} aria-hidden="true"></i>
             </div>
-            <div className="store-tabs">
+
+            {cardSafeToSpend.map(({card, closeDate, depsBeforeClose, billsBefore, safe}) => {
+              const closeDateStr = closeDate.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+              const daysToClose = daysUntil(closeDate)
+              const afterTrip = safe - plannedSpend
+              return (
+                <div key={card.id} style={{marginBottom:16,paddingBottom:16,borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8}}>
+                    <span style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)'}}>{card.name}</span>
+                    <span style={{fontSize:12,color:'var(--color-text-secondary)'}}>closes {closeDateStr} · {daysToClose}d away</span>
+                  </div>
+                  <div style={{fontSize:30,fontWeight:500,color:safe>=200?'#1D9E75':safe>=0?'#BA7517':'#D85A30',marginBottom:10}}>
+                    {safe<0?'-':''}{fmt(safe)}
+                  </div>
+                  <div className="spend-breakdown" style={{marginTop:0,borderTop:'none',paddingTop:0}}>
+                    <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(joint)}</span></div>
+                    {depsBeforeClose>0 && <div className="spend-line"><span>Deposits before close</span><span className="val-pos">+{fmt(depsBeforeClose)}</span></div>}
+                    <div className="spend-line"><span>Bills due before close</span><span className="val-neg">-{fmt(billsBefore)}</span></div>
+                    <div className="spend-line total"><span>Safe to spend</span><span style={{color:safe>=200?'#1D9E75':safe>=0?'#BA7517':'#D85A30'}}>{safe<0?'-':''}{fmt(safe)}</span></div>
+                  </div>
+                </div>
+              )
+            })}
+
+            <div className="store-tabs" style={{marginTop:4}}>
               {[['grocery','ti-building-store','Grocery'],['costco','ti-box','Costco'],['custom','ti-pencil','Custom']].map(([s,icon,label]) => (
                 <button key={s} className={`store-tab ${store===s?'active':''}`} onClick={() => setStore(s)}>
                   <i className={`ti ${icon}`} aria-hidden="true"></i>{label}
                 </button>
               ))}
-            </div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <span style={{fontSize:13,color:'var(--color-text-secondary)'}}>Planned spend</span>
-              <span style={{fontSize:15,fontWeight:500,color:'var(--color-text-primary)'}}>
-                {store==='grocery'?'$150 typical':store==='costco'?'$300 typical':fmt(plannedSpend)+' custom'}
-              </span>
             </div>
             {store === 'custom' && (
               <div style={{marginBottom:8,display:'flex',gap:8,alignItems:'center'}}>
@@ -323,18 +373,19 @@ export default function App() {
                 <input type="number" min="0" placeholder="e.g. 200" value={customSpend} onChange={e=>setCustomSpend(e.target.value)} style={{flex:1,fontSize:15,fontWeight:500}} />
               </div>
             )}
-            {(plannedSpend > 0 || store !== 'custom') && (
-              <div className={`coverage-row ${afterTrip>=0?'cov-good':'cov-bad'}`}>
-                {afterTrip>=0 ? `✓ Go for it — ${fmt(afterTrip)} left after this trip` : `✗ Over budget by ${fmt(Math.abs(afterTrip))} — keep it under ${fmt(safeToSpend)}`}
-              </div>
-            )}
-            <div className="spend-breakdown">
-              <div className="spend-line"><span>Joint account now</span><span className="val-pos">{fmt(joint)}</span></div>
-              <div className="spend-line"><span>Remaining deposits</span><span className="val-pos">+{fmt(remainingDeps)}</span></div>
-              <div className="spend-line"><span>Run-rate card projections</span><span className="val-neg">-{fmt(totalProjectedCards)}</span></div>
-              <div className="spend-line"><span>Fixed &amp; variable bills</span><span className="val-neg">-{fmt(totalFixedAndVar)}</span></div>
-              <div className="spend-line total"><span>Safe to spend</span><span style={{color:safeToSpend>=200?'#1D9E75':safeToSpend>=0?'#BA7517':'#D85A30'}}>{safeToSpend<0?'-':''}{fmt(safeToSpend)}</span></div>
-            </div>
+            {cardSafeToSpend.map(({card, closeDate, safe}) => {
+              const afterTrip = safe - plannedSpend
+              const closeDateStr = closeDate.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+              if (plannedSpend === 0 && store === 'custom') return null
+              return (
+                <div key={card.id} className={`coverage-row ${afterTrip>=0?'cov-good':'cov-bad'}`} style={{marginBottom:6}}>
+                  <span style={{fontSize:12,fontWeight:500,marginRight:6}}>{card.name}:</span>
+                  {afterTrip>=0
+                    ? `✓ Go for it — ${fmt(afterTrip)} left before ${closeDateStr}`
+                    : `✗ Over by ${fmt(Math.abs(afterTrip))} — keep it under ${fmt(safe)}`}
+                </div>
+              )
+            })}
           </div>
 
           {/* Banner */}
@@ -349,7 +400,6 @@ export default function App() {
             </span>
           </div>
 
-          {/* Summary metrics */}
           <div className="metric-grid">
             <div className="metric"><div className="metric-label">Joint account now</div><div className="metric-value">{fmt(joint)}</div></div>
             <div className="metric"><div className="metric-label">Total projected bills</div><div className="metric-value">{fmt(totalAllBills)}</div><div className="metric-sub">run-rate + all expenses</div></div>
