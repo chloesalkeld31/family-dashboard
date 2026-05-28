@@ -16,7 +16,11 @@ function nextOccurrence(day) {
   let d = new Date(yr, mo, day); if (d <= today) d = new Date(yr, mo+1, day); return d
 }
 function nextLastDay() {
-  let d = new Date(yr, mo+1, 0); if (d <= today) d = new Date(yr, mo+2, 0); return d
+  // Always return the last day of the NEXT month from today,
+  // since "last day of month" bills are typically the upcoming one
+  const lastOfThisMonth = new Date(yr, mo+1, 0)
+  if (lastOfThisMonth > today) return lastOfThisMonth
+  return new Date(yr, mo+2, 0)
 }
 function nextLastThursday() {
   let d = lastThursdayOfMonth(yr, mo); if (d <= today) d = lastThursdayOfMonth(yr, mo+1); return d
@@ -258,6 +262,7 @@ export default function App() {
 
   async function saveVariable(v) {
     const bill = parseFloat(editVals[`vb_${v.id}`])
+    const schedDay = parseInt(editVals[`vd_${v.id}`])
     const lastMo = parseFloat(editVals[`vlm_${v.id}`])
     const lastYr = parseFloat(editVals[`vly_${v.id}`])
     const newHist = [...v.history]
@@ -265,6 +270,7 @@ export default function App() {
     if (!isNaN(lastYr)) newHist[mo] = lastYr
     await supabase.from('variable_expenses').update({
       current_bill: isNaN(bill) ? v.current_bill : bill,
+      scheduled_day: isNaN(schedDay) ? v.scheduled_day : schedDay,
       history: newHist,
       updated_at: new Date()
     }).eq('id', v.id)
@@ -549,7 +555,7 @@ export default function App() {
                     <div className="exp-meta">Auto-pay {dueStr} · hard due {hardStr}</div></div>
                   <div style={{display:'flex',gap:6}}>
                     <CountdownPill days={days} />
-                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`vb_${vx.id}`]:String(vx.current_bill??''), [`vlm_${vx.id}`]:String(vx.history[(mo+11)%12]??''), [`vly_${vx.id}`]:String(vx.history[mo]??'')})); toggleEdit(`var_${vx.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                    <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`vb_${vx.id}`]:String(vx.current_bill??''), [`vd_${vx.id}`]:String(vx.scheduled_day), [`vlm_${vx.id}`]:String(vx.history[(mo+11)%12]??''), [`vly_${vx.id}`]:String(vx.history[mo]??'')})); toggleEdit(`var_${vx.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
                 <div className="detail-row"><span className="detail-label">Seasonal estimate</span><span className="detail-value">{est!=null?fmt(est):'No history'}</span></div>
@@ -562,6 +568,7 @@ export default function App() {
                 <CoverageBlock dueDate={due} amount={displayAmt} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due)} />
                 {openEdit===`var_${vx.id}` && (
                   <div className="inline-edit open">
+                    <div className="edit-row"><label>Payment day of month</label><input type="number" min="1" max="31" value={editVals[`vd_${vx.id}`]??''} onChange={ev(`vd_${vx.id}`)} /></div>
                     <div className="edit-row"><label>This month's bill ($)</label><input type="number" min="0" step="0.01" value={editVals[`vb_${vx.id}`]??''} placeholder="Enter amount" onChange={ev(`vb_${vx.id}`)} /></div>
                     <div className="edit-row"><label>Last month ($)</label><input type="number" min="0" step="0.01" value={editVals[`vlm_${vx.id}`]??''} onChange={ev(`vlm_${vx.id}`)} /></div>
                     <div className="edit-row"><label>Same month last year ($)</label><input type="number" min="0" step="0.01" value={editVals[`vly_${vx.id}`]??''} onChange={ev(`vly_${vx.id}`)} /></div>
