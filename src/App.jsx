@@ -288,7 +288,7 @@ export default function App() {
     setCalError(null)
     try {
       const tokens = await exchangeCode(code)
-      if (tokens.error) { setCalError(tokens.error); setCalLoading(false); return }
+      if (tokens.error) { setCalError(`${tokens.error}: ${tokens.detail || ''}`); setCalLoading(false); return }
       const stored = {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
