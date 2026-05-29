@@ -1,7 +1,7 @@
-// Google Calendar helper — handles auth and event fetching
+// Google Calendar helper — fully server-side OAuth, secret never in browser
 
-const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '651702299707-7mhrmif2joquubf9112s9r8b66n4h4eg.apps.googleusercontent.com'
-const REDIRECT_URI = 'https://family-dashboard-rho-nine.vercel.app'
+const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+const REDIRECT_URI = 'https://family-dashboard-rho-nine.vercel.app/api/google-callback'
 const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
 
 export function getAuthUrl() {
@@ -13,28 +13,15 @@ export function getAuthUrl() {
     access_type: 'offline',
     prompt: 'consent',
   })
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
-  console.log('Google Auth URL:', url)
-  console.log('Client ID being used:', CLIENT_ID)
-  return url
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`
 }
 
-export async function exchangeCode(code) {
-  const res = await fetch('/api/google-auth', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'exchange', code }),
-  })
-  return res.json()
-}
-
-export async function refreshToken(refresh_token) {
-  const res = await fetch('/api/google-auth', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'refresh', refresh_token }),
-  })
-  return res.json()
+// Get a valid access token from the server (uses httpOnly cookie — secret stays server-side)
+export async function getAccessToken() {
+  const res = await fetch('/api/google-refresh', { method: 'POST' })
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.access_token || null
 }
 
 export async function fetchEvents(access_token) {
@@ -44,4 +31,8 @@ export async function fetchEvents(access_token) {
     body: JSON.stringify({ access_token }),
   })
   return res.json()
+}
+
+export async function disconnect() {
+  await fetch('/api/google-disconnect', { method: 'POST' })
 }
