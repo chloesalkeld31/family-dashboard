@@ -26,7 +26,7 @@ export default async function handler(req, res) {
         country_codes: ['US'],
         language: 'en',
         user: { client_user_id: req.body.user_id || 'family-user' },
-        products: ['transactions', 'liabilities'],
+        products: ['transactions'],
       }),
     })
     const data = await response.json()
