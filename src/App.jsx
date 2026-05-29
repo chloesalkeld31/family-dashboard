@@ -406,11 +406,15 @@ export default function App() {
 
   async function setTodoStatus(todo, newStatus) {
     const updates = { status: newStatus, updated_at: new Date() }
-    // When marked done, record the time so we can auto-archive after 24h
     if (newStatus === 'done') updates.archived_at = new Date()
-    // If moving back from done, clear the archived_at
     if (newStatus !== 'done') updates.archived_at = null
     await supabase.from('todos').update(updates).eq('id', todo.id)
+    // If this is a birthday card task being marked done, auto-mark card_sent
+    if (newStatus === 'done' && todo.text.startsWith('Send birthday card — ')) {
+      const bdName = todo.text.replace('Send birthday card — ', '').trim()
+      const match = birthdays.find(b => b.name === bdName)
+      if (match) await supabase.from('birthdays').update({ card_sent: true, updated_at: new Date() }).eq('id', match.id)
+    }
     await loadAll(false)
   }
 
@@ -423,9 +427,10 @@ export default function App() {
     const name = editVals.bd_name?.trim()
     const date = editVals.bd_date
     if (!name || !date) return
-    await supabase.from('birthdays').insert({ name, birth_date: date, card_sent: false })
+    const { error } = await supabase.from('birthdays').insert({ name, birth_date: date, card_sent: false })
+    if (error) { console.error('Birthday insert error:', error); alert('Error saving: ' + error.message); return }
     setEditVals(v => ({...v, bd_name:'', bd_date:''}))
-    toggleEdit('add_birthday')
+    setOpenEdit(null)
     await loadAll(false)
   }
 
@@ -1202,7 +1207,8 @@ export default function App() {
               const withNext = birthdays.map(bd => {
                 const birth = new Date(bd.birth_date + 'T00:00:00')
                 const thisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate())
-                const nextBday = thisYear <= today
+                // Only push to next year if birthday has strictly passed (not today)
+                const nextBday = thisYear < today
                   ? new Date(today.getFullYear()+1, birth.getMonth(), birth.getDate())
                   : thisYear
                 const daysAway = daysUntil(nextBday)
@@ -1248,6 +1254,28 @@ export default function App() {
                       <i className={`ti ${bd.card_sent?'ti-circle-check':'ti-circle'}`} style={{fontSize:15}} aria-hidden="true"></i>
                       {bd.card_sent ? 'Card sent ✓' : 'Mark card sent'}
                     </button>
+                    {/* Add card to-do if upcoming and not sent */}
+                    {bd.upcoming && !bd.card_sent && (() => {
+                      const taskText = `Send birthday card — ${bd.name}`
+                      const exists = todos.some(t => t.text === taskText && t.status !== 'done')
+                      return !exists ? (
+                        <button
+                          onClick={async ()=>{
+                            await supabase.from('todos').insert({ text: taskText, status: 'todo', assigned_to: '', due_label: bd.dueStr })
+                            await loadAll(false)
+                          }}
+                          style={{marginTop:4,background:'none',border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontSize:12,padding:'3px 8px',color:'var(--color-text-secondary)',fontFamily:'inherit'}}
+                        >
+                          <i className="ti ti-plus" style={{fontSize:12}} aria-hidden="true"></i>
+                          Add "send card" to To-do
+                        </button>
+                      ) : (
+                        <div style={{marginTop:4,fontSize:12,color:'#BA7517',display:'flex',alignItems:'center',gap:4}}>
+                          <i className="ti ti-checkbox" style={{fontSize:12}} aria-hidden="true"></i>
+                          Card task added to To-do
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {/* Delete */}
