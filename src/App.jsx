@@ -163,6 +163,11 @@ export default function App() {
   const [calConnected, setCalConnected] = useState(false)
   const [calLoading, setCalLoading] = useState(false)
   const [calError, setCalError] = useState(null)
+  const [plaidAccounts, setPlaidAccounts] = useState([]) // stored connections
+  const [plaidBalances, setPlaidBalances] = useState([]) // live balance data
+  const [plaidLoading, setPlaidLoading] = useState(false)
+  const [plaidLinkToken, setPlaidLinkToken] = useState(null)
+  const [showPlaidConnect, setShowPlaidConnect] = useState(false)
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -199,7 +204,7 @@ export default function App() {
     const { data: { session: currentSession } } = await supabase.auth.getSession()
     if (!currentSession) return
     if (showSpinner) setLoading(true)
-    const [ja, dep, cc, fx, vx, td, sl, bd] = await Promise.all([
+    const [ja, dep, cc, fx, vx, td, sl, bd, pa] = await Promise.all([
       supabase.from('joint_account').select('*').limit(1),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
@@ -208,6 +213,7 @@ export default function App() {
       supabase.from('todos').select('*').order('created_at'),
       supabase.from('shopping_lists').select('*').order('created_at'),
       supabase.from('birthdays').select('*').order('birth_date'),
+      supabase.from('plaid_accounts').select('*').order('created_at'),
     ])
     if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
@@ -216,6 +222,13 @@ export default function App() {
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
     if (td.data) setTodos(td.data)
     if (sl.data) setShoppingList(sl.data)
+    if (pa.data) {
+      setPlaidAccounts(pa.data)
+      // Auto-sync Plaid balances if we have connected accounts
+      if (pa.data.length > 0) {
+        syncPlaidBalances(pa.data, ja.data, cc.data)
+      }
+    }
     if (bd.data) {
       setBirthdays(bd.data)
       // Auto-create "send card" todos for birthdays within 30 days
@@ -245,6 +258,15 @@ export default function App() {
   }, [])
 
   useEffect(() => { if (session) loadAll() }, [session, loadAll])
+
+  // Load Plaid Link script
+  useEffect(() => {
+    const script = document.createElement('script')
+    script.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js'
+    script.async = true
+    document.head.appendChild(script)
+    return () => document.head.removeChild(script)
+  }, [])
 
   // ── Google Calendar ───────────────────────────────────────
   useEffect(() => {
@@ -285,6 +307,126 @@ export default function App() {
   async function refreshCalendar() {
     const access_token = await getAccessToken()
     if (access_token) await loadCalEvents(access_token)
+  }
+
+  // ── Plaid ─────────────────────────────────────────────────
+  async function syncPlaidBalances(accounts, jaData, ccData) {
+    if (!accounts?.length) return
+    setPlaidLoading(true)
+    try {
+      const res = await fetch('/api/plaid-balances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_tokens: accounts.map(a => ({
+            access_token: a.access_token,
+            institution_name: a.institution_name
+          }))
+        })
+      })
+      const data = await res.json()
+      if (data.error) { console.error('Plaid balance error:', data.error); setPlaidLoading(false); return }
+
+      setPlaidBalances(data.institutions)
+
+      // Auto-update Supabase with live balances
+      for (const inst of data.institutions) {
+        if (inst.error) continue
+        const name = inst.institution_name.toLowerCase()
+
+        // SoFi → joint account
+        if (name.includes('sofi')) {
+          const checking = inst.accounts.find(a => a.subtype === 'checking' || a.type === 'depository')
+          if (checking) {
+            const bal = checking.available ?? checking.current
+            await supabase.from('joint_account').update({ balance: bal, updated_at: new Date() }).eq('id', jaData?.[0]?.id)
+            setJoint(bal)
+          }
+        }
+
+        // Chase or Citi → credit cards
+        if (name.includes('chase') || name.includes('citi')) {
+          for (const acc of inst.accounts) {
+            if (acc.type === 'credit') {
+              // Match to card by name
+              const matchingCard = ccData?.find(c =>
+                c.name.toLowerCase().includes(name.includes('chase') ? 'chase' : 'citi')
+              )
+              if (matchingCard) {
+                const currentBal = Math.abs(acc.current)
+                await supabase.from('credit_cards').update({
+                  balance: currentBal,
+                  updated_at: new Date()
+                }).eq('id', matchingCard.id)
+              }
+            }
+          }
+        }
+      }
+    } catch(e) { console.error('Plaid sync error:', e) }
+    setPlaidLoading(false)
+  }
+
+  async function initPlaidLink(institutionName) {
+    setPlaidLoading(true)
+    try {
+      const res = await fetch('/api/plaid-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: session?.user?.id })
+      })
+      const data = await res.json()
+      if (data.error) { alert('Error: ' + data.error); setPlaidLoading(false); return }
+      setPlaidLinkToken(data.link_token)
+      setShowPlaidConnect(institutionName)
+    } catch(e) { alert('Failed to initialize Plaid: ' + e.message) }
+    setPlaidLoading(false)
+  }
+
+  async function handlePlaidSuccess(publicToken, metadata, institutionName) {
+    try {
+      const res = await fetch('/api/plaid-exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ public_token: publicToken })
+      })
+      const data = await res.json()
+      if (data.error) { alert('Error: ' + data.error); return }
+
+      // Save access token to Supabase
+      const existing = plaidAccounts.find(a => a.institution_name === institutionName)
+      if (existing) {
+        await supabase.from('plaid_accounts').update({
+          access_token: data.access_token,
+          institution_id: metadata?.institution?.institution_id,
+          updated_at: new Date()
+        }).eq('id', existing.id)
+      } else {
+        await supabase.from('plaid_accounts').insert({
+          institution_name: institutionName,
+          institution_id: metadata?.institution?.institution_id,
+          access_token: data.access_token,
+        })
+      }
+      setShowPlaidConnect(null)
+      setPlaidLinkToken(null)
+      await loadAll(false)
+    } catch(e) { alert('Failed to connect account: ' + e.message) }
+  }
+
+  async function disconnectPlaidAccount(account) {
+    await supabase.from('plaid_accounts').delete().eq('id', account.id)
+    await loadAll(false)
+  }
+
+  function openPlaidLink(linkToken, institutionName) {
+    if (!window.Plaid) { alert('Plaid not loaded yet — please try again'); return }
+    const handler = window.Plaid.create({
+      token: linkToken,
+      onSuccess: (public_token, metadata) => handlePlaidSuccess(public_token, metadata, institutionName),
+      onExit: (err) => { if (err) console.error('Plaid exit error:', err); setShowPlaidConnect(null); setPlaidLinkToken(null) },
+    })
+    handler.open()
   }
 
   // ── Realtime sync ─────────────────────────────────────────
@@ -609,7 +751,66 @@ export default function App() {
       {tab === 'finances' && (
         <div className="section">
 
-          {/* Monthly overview — this month + next month */}
+          {/* Plaid bank sync status */}
+          {(() => {
+            const institutions = ['SoFi', 'Chase', 'Citi']
+            const allConnected = institutions.every(name =>
+              plaidAccounts.some(a => a.institution_name === name)
+            )
+            return (
+              <div className="card" style={{marginBottom:'0.75rem'}}>
+                <div className="card-header" style={{marginBottom: plaidAccounts.length > 0 ? 8 : 0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span className="card-title" style={{marginBottom:0}}>Bank sync</span>
+                    {plaidLoading && <div className="spinner" style={{width:14,height:14,borderWidth:2}}></div>}
+                    {!plaidLoading && allConnected && <span style={{fontSize:11,background:'#EAF3DE',color:'#3B6D11',borderRadius:99,padding:'2px 8px',fontWeight:500}}>✓ All connected</span>}
+                  </div>
+                  <div style={{display:'flex',gap:6}}>
+                    {plaidAccounts.length > 0 && (
+                      <button className="edit-btn" onClick={() => syncPlaidBalances(plaidAccounts)} disabled={plaidLoading}>
+                        <i className="ti ti-refresh" aria-hidden="true"></i> Sync
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                  {institutions.map(name => {
+                    const connected = plaidAccounts.find(a => a.institution_name === name)
+                    const liveData = plaidBalances.find(b => b.institution_name === name)
+                    return (
+                      <div key={name} style={{flex:1,minWidth:80,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
+                        <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-primary)',marginBottom:4}}>{name}</div>
+                        {connected ? (
+                          <>
+                            {liveData?.accounts?.map(acc => (
+                              <div key={acc.id} style={{fontSize:11,color:'var(--color-text-secondary)'}}>{acc.name}: {fmt(Math.abs(acc.current))}</div>
+                            ))}
+                            <button onClick={()=>disconnectPlaidAccount(connected)} style={{marginTop:6,fontSize:10,color:'#D85A30',background:'none',border:'none',cursor:'pointer',padding:0,fontFamily:'inherit'}}>Disconnect</button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={async () => { await initPlaidLink(name); }}
+                            style={{fontSize:11,background:'#1D9E75',color:'white',border:'none',borderRadius:'var(--border-radius-md)',padding:'4px 8px',cursor:'pointer',marginTop:2,fontFamily:'inherit',fontWeight:500}}
+                          >
+                            + Connect
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* Plaid Link launcher */}
+                {plaidLinkToken && showPlaidConnect && (
+                  <div style={{marginTop:10,padding:'10px 12px',background:'#EAF3DE',borderRadius:'var(--border-radius-md)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:13,color:'#3B6D11'}}>Ready to connect {showPlaidConnect}</span>
+                    <button className="save-btn" style={{width:'auto',padding:'6px 14px'}} onClick={()=>openPlaidLink(plaidLinkToken, showPlaidConnect)}>
+                      Open Bank Login
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
           {[
             {
               label: `${new Date(displayYr,normDisplayMo,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} (this month)`,
