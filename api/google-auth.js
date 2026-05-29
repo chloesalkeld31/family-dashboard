@@ -10,12 +10,11 @@ export default async function handler(req, res) {
   const { code, action } = req.body
 
   if (action === 'exchange') {
-    const redirect_uri = req.headers.origin || 'https://family-dashboard-rho-nine.vercel.app'
     const params = new URLSearchParams({
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri,
+      redirect_uri: 'https://family-dashboard-rho-nine.vercel.app',
       grant_type: 'authorization_code',
     })
     const response = await fetch('https://oauth2.googleapis.com/token', {
