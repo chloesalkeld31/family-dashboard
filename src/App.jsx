@@ -168,6 +168,7 @@ export default function App() {
   const [plaidLoading, setPlaidLoading] = useState(false)
   const [plaidLinkToken, setPlaidLinkToken] = useState(null)
   const [showPlaidConnect, setShowPlaidConnect] = useState(false)
+  const [plaidAccountPicker, setPlaidAccountPicker] = useState(null) // {institutionName, accounts}
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -334,34 +335,41 @@ export default function App() {
         if (inst.error) continue
         const name = inst.institution_name.toLowerCase()
 
-        // SoFi → joint account
+      for (const inst of data.institutions) {
+        if (inst.error) continue
+        const name = inst.institution_name.toLowerCase()
+        const storedAccount = accounts.find(a => a.institution_name === inst.institution_name)
+
+        // SoFi → joint account (use selected account or first checking)
         if (name.includes('sofi')) {
-          const checking = inst.accounts.find(a => a.subtype === 'checking' || a.type === 'depository')
-          if (checking) {
-            const bal = checking.available ?? checking.current
+          const account = storedAccount?.selected_account_id
+            ? inst.accounts.find(a => a.id === storedAccount.selected_account_id)
+            : inst.accounts.find(a => a.subtype === 'checking' && a.type === 'depository')
+          if (account) {
+            const bal = account.available ?? account.current
             await supabase.from('joint_account').update({ balance: bal, updated_at: new Date() }).eq('id', jaData?.[0]?.id)
             setJoint(bal)
           }
         }
 
-        // Chase or Citi → credit cards
+        // Chase or Citi → credit cards (use selected account or first credit card)
         if (name.includes('chase') || name.includes('citi')) {
-          for (const acc of inst.accounts) {
-            if (acc.type === 'credit') {
-              // Match to card by name
-              const matchingCard = ccData?.find(c =>
-                c.name.toLowerCase().includes(name.includes('chase') ? 'chase' : 'citi')
-              )
-              if (matchingCard) {
-                const currentBal = Math.abs(acc.current)
-                await supabase.from('credit_cards').update({
-                  balance: currentBal,
-                  updated_at: new Date()
-                }).eq('id', matchingCard.id)
-              }
+          const account = storedAccount?.selected_account_id
+            ? inst.accounts.find(a => a.id === storedAccount.selected_account_id)
+            : inst.accounts.find(a => a.type === 'credit')
+          if (account) {
+            const matchingCard = ccData?.find(c =>
+              c.name.toLowerCase().includes(name.includes('chase') ? 'chase' : 'citi')
+            )
+            if (matchingCard) {
+              await supabase.from('credit_cards').update({
+                balance: Math.abs(account.current),
+                updated_at: new Date()
+              }).eq('id', matchingCard.id)
             }
           }
         }
+      }
       }
     } catch(e) { console.error('Plaid sync error:', e) }
     setPlaidLoading(false)
@@ -395,23 +403,45 @@ export default function App() {
 
       // Save access token to Supabase
       const existing = plaidAccounts.find(a => a.institution_name === institutionName)
+      let savedId
       if (existing) {
         await supabase.from('plaid_accounts').update({
           access_token: data.access_token,
           institution_id: metadata?.institution?.institution_id,
           updated_at: new Date()
         }).eq('id', existing.id)
+        savedId = existing.id
       } else {
-        await supabase.from('plaid_accounts').insert({
+        const { data: inserted } = await supabase.from('plaid_accounts').insert({
           institution_name: institutionName,
           institution_id: metadata?.institution?.institution_id,
           access_token: data.access_token,
-        })
+        }).select().single()
+        savedId = inserted?.id
       }
+
       setShowPlaidConnect(null)
       setPlaidLinkToken(null)
-      await loadAll(false)
+
+      // Fetch accounts to show picker
+      const balRes = await fetch('/api/plaid-balances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_tokens: [{ access_token: data.access_token, institution_name: institutionName }] })
+      })
+      const balData = await balRes.json()
+      const accounts = balData.institutions?.[0]?.accounts || []
+
+      // Show account picker
+      setPlaidAccountPicker({ institutionName, accounts, plaidAccountDbId: savedId })
+
     } catch(e) { alert('Failed to connect account: ' + e.message) }
+  }
+
+  async function selectPlaidAccount(dbId, accountId) {
+    await supabase.from('plaid_accounts').update({ selected_account_id: accountId, updated_at: new Date() }).eq('id', dbId)
+    setPlaidAccountPicker(null)
+    await loadAll(false)
   }
 
   async function disconnectPlaidAccount(account) {
@@ -782,10 +812,18 @@ export default function App() {
                         <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-primary)',marginBottom:4}}>{name}</div>
                         {connected ? (
                           <>
-                            {liveData?.accounts?.map(acc => (
-                              <div key={acc.id} style={{fontSize:11,color:'var(--color-text-secondary)'}}>{acc.name}: {fmt(Math.abs(acc.current))}</div>
-                            ))}
-                            <button onClick={()=>disconnectPlaidAccount(connected)} style={{marginTop:6,fontSize:10,color:'#D85A30',background:'none',border:'none',cursor:'pointer',padding:0,fontFamily:'inherit'}}>Disconnect</button>
+                            {liveData?.accounts
+                              ?.filter(acc => connected.selected_account_id
+                                ? acc.id === connected.selected_account_id
+                                : (name === 'SoFi' ? acc.subtype === 'checking' : acc.type === 'credit'))
+                              .map(acc => (
+                                <div key={acc.id} style={{fontSize:11,color:'var(--color-text-secondary)'}}>{acc.name}: {fmt(Math.abs(acc.current))}</div>
+                              ))}
+                            <button onClick={async ()=>{
+                              const liveInst = plaidBalances.find(b => b.institution_name === name)
+                              if (liveInst) setPlaidAccountPicker({ institutionName: name, accounts: liveInst.accounts, plaidAccountDbId: connected.id })
+                            }} style={{marginTop:4,fontSize:10,color:'#185FA5',background:'none',border:'none',cursor:'pointer',padding:0,fontFamily:'inherit'}}>Change account</button>
+                            <button onClick={()=>disconnectPlaidAccount(connected)} style={{marginTop:2,fontSize:10,color:'#D85A30',background:'none',border:'none',cursor:'pointer',padding:0,fontFamily:'inherit',display:'block'}}>Disconnect</button>
                           </>
                         ) : (
                           <button
@@ -806,6 +844,26 @@ export default function App() {
                     <button className="save-btn" style={{width:'auto',padding:'6px 14px'}} onClick={()=>openPlaidLink(plaidLinkToken, showPlaidConnect)}>
                       Open Bank Login
                     </button>
+                  </div>
+                )}
+
+                {/* Account picker — shown after connecting */}
+                {plaidAccountPicker && (
+                  <div style={{marginTop:10,padding:'12px',background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)'}}>
+                    <div style={{fontSize:13,fontWeight:500,marginBottom:8,color:'var(--color-text-primary)'}}>
+                      Select which {plaidAccountPicker.institutionName} account to use:
+                    </div>
+                    {plaidAccountPicker.accounts.map(acc => (
+                      <button key={acc.id} onClick={()=>selectPlaidAccount(plaidAccountPicker.plaidAccountDbId, acc.id)}
+                        style={{display:'flex',justifyContent:'space-between',alignItems:'center',width:'100%',padding:'8px 10px',marginBottom:6,background:'var(--color-background-primary)',border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)'}}>{acc.name}</div>
+                          <div style={{fontSize:11,color:'var(--color-text-secondary)',textTransform:'capitalize'}}>{acc.type} · {acc.subtype}</div>
+                        </div>
+                        <div style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)',flexShrink:0,marginLeft:12}}>{fmt(Math.abs(acc.current))}</div>
+                      </button>
+                    ))}
+                    <button onClick={()=>setPlaidAccountPicker(null)} style={{fontSize:12,color:'var(--color-text-secondary)',background:'none',border:'none',cursor:'pointer',padding:0,fontFamily:'inherit',marginTop:2}}>Cancel</button>
                   </div>
                 )}
               </div>
