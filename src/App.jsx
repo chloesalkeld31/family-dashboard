@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
-import { getAuthUrl, exchangeCode, refreshToken, fetchEvents } from './googleCalendar'
+import { getAuthUrl, getAccessToken, fetchEvents, disconnect } from './googleCalendar'
 import './App.css'
 
 const today = new Date(); today.setHours(0,0,0,0)
@@ -248,58 +248,21 @@ export default function App() {
 
   // ── Google Calendar ───────────────────────────────────────
   useEffect(() => {
-    // Check if we're returning from Google OAuth with a code
     const params = new URLSearchParams(window.location.search)
-    const code = params.get('code')
-    if (code) {
-      // Clean the URL
+    const connected = params.get('gcal_connected')
+    const error = params.get('gcal_error')
+    if (connected || error) {
       window.history.replaceState({}, '', '/')
-      handleGoogleCode(code)
-    } else {
-      // Try to load stored tokens
-      loadCalendarTokens()
+      if (error) { setCalError(decodeURIComponent(error)); setCalLoading(false); return }
     }
+    loadCalendarIfConnected()
   }, [session])
 
-  async function loadCalendarTokens() {
-    const stored = localStorage.getItem('gcal_tokens')
-    if (!stored) return
-    const tokens = JSON.parse(stored)
-    // Check if access token is still valid (expires_at stored in ms)
-    if (tokens.expires_at && Date.now() < tokens.expires_at) {
-      await loadCalEvents(tokens.access_token)
-    } else if (tokens.refresh_token) {
-      // Refresh the token
-      const fresh = await refreshToken(tokens.refresh_token)
-      if (fresh.access_token) {
-        const newTokens = {
-          ...tokens,
-          access_token: fresh.access_token,
-          expires_at: Date.now() + (fresh.expires_in * 1000)
-        }
-        localStorage.setItem('gcal_tokens', JSON.stringify(newTokens))
-        await loadCalEvents(fresh.access_token)
-      }
-    }
-  }
-
-  async function handleGoogleCode(code) {
+  async function loadCalendarIfConnected() {
     setCalLoading(true)
-    setCalError(null)
-    try {
-      const tokens = await exchangeCode(code)
-      if (tokens.error) { setCalError(`${tokens.error}: ${tokens.detail || ''}`); setCalLoading(false); return }
-      const stored = {
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: Date.now() + (tokens.expires_in * 1000)
-      }
-      localStorage.setItem('gcal_tokens', JSON.stringify(stored))
-      await loadCalEvents(tokens.access_token)
-    } catch(e) {
-      setCalError('Failed to connect Google Calendar')
-    }
-    setCalLoading(false)
+    const access_token = await getAccessToken()
+    if (!access_token) { setCalConnected(false); setCalLoading(false); return }
+    await loadCalEvents(access_token)
   }
 
   async function loadCalEvents(access_token) {
@@ -307,23 +270,21 @@ export default function App() {
     setCalError(null)
     try {
       const data = await fetchEvents(access_token)
-      if (data.error) {
-        setCalError(data.error)
-        setCalConnected(false)
-      } else {
-        setCalEvents(data.events || [])
-        setCalConnected(true)
-      }
-    } catch(e) {
-      setCalError('Failed to load events')
-    }
+      if (data.error) { setCalError(data.error); setCalConnected(false) }
+      else { setCalEvents(data.events || []); setCalConnected(true) }
+    } catch(e) { setCalError('Failed to load events') }
     setCalLoading(false)
   }
 
-  function disconnectCalendar() {
-    localStorage.removeItem('gcal_tokens')
+  async function disconnectCalendar() {
+    await disconnect()
     setCalConnected(false)
     setCalEvents([])
+  }
+
+  async function refreshCalendar() {
+    const access_token = await getAccessToken()
+    if (access_token) await loadCalEvents(access_token)
   }
 
   // ── Realtime sync ─────────────────────────────────────────
@@ -1286,7 +1247,7 @@ export default function App() {
                   </span>
                 </div>
                 <div style={{display:'flex',gap:8}}>
-                  <button className="edit-btn" onClick={()=>loadCalEvents(JSON.parse(localStorage.getItem('gcal_tokens')||'{}').access_token)}>
+                  <button className="edit-btn" onClick={refreshCalendar}>
                     <i className="ti ti-refresh" aria-hidden="true"></i> Refresh
                   </button>
                   <button className="edit-btn" onClick={disconnectCalendar} style={{color:'#D85A30'}}>
