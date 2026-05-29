@@ -1,7 +1,7 @@
 // Google Calendar helper — handles auth and event fetching
 
 const CLIENT_ID = '651702299707-7mhrmif2joquubf9112s9r8b66n4h4eg.apps.googleusercontent.com'
-const REDIRECT_URI = 'https://family-dashboard-rho-nine.vercel.app'
+const REDIRECT_URI = window.location.origin
 const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
 
 export function getAuthUrl() {
