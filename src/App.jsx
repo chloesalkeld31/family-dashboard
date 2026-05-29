@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
+import { getAuthUrl, exchangeCode, refreshToken, fetchEvents } from './googleCalendar'
 import './App.css'
 
 const today = new Date(); today.setHours(0,0,0,0)
@@ -158,6 +159,10 @@ export default function App() {
   const [todos, setTodos] = useState([])
   const [shoppingList, setShoppingList] = useState([])
   const [birthdays, setBirthdays] = useState([])
+  const [calEvents, setCalEvents] = useState([])
+  const [calConnected, setCalConnected] = useState(false)
+  const [calLoading, setCalLoading] = useState(false)
+  const [calError, setCalError] = useState(null)
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -211,11 +216,115 @@ export default function App() {
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
     if (td.data) setTodos(td.data)
     if (sl.data) setShoppingList(sl.data)
-    if (bd.data) setBirthdays(bd.data)
+    if (bd.data) {
+      setBirthdays(bd.data)
+      // Auto-create "send card" todos for birthdays within 30 days
+      // that aren't card_sent and don't already have an active task
+      if (td.data && bd.data.length > 0) {
+        const existingTasks = new Set(td.data.filter(t => t.status !== 'done').map(t => t.text))
+        for (const bday of bd.data) {
+          if (bday.card_sent) continue
+          const birth = new Date(bday.birth_date + 'T00:00:00')
+          const thisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate())
+          const nextBday = thisYear < today
+            ? new Date(today.getFullYear()+1, birth.getMonth(), birth.getDate())
+            : thisYear
+          const daysAway = Math.round((nextBday - today) / 86400000)
+          const taskText = `Send birthday card — ${bday.name}`
+          if (daysAway <= 30 && !existingTasks.has(taskText)) {
+            const dueLabel = nextBday.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+            await supabase.from('todos').insert({ text: taskText, status: 'todo', assigned_to: '', due_label: dueLabel })
+          }
+        }
+        // Reload todos if we inserted any
+        const { data: freshTodos } = await supabase.from('todos').select('*').order('created_at')
+        if (freshTodos) setTodos(freshTodos)
+      }
+    }
     setLoading(false)
   }, [])
 
   useEffect(() => { if (session) loadAll() }, [session, loadAll])
+
+  // ── Google Calendar ───────────────────────────────────────
+  useEffect(() => {
+    // Check if we're returning from Google OAuth with a code
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (code) {
+      // Clean the URL
+      window.history.replaceState({}, '', '/')
+      handleGoogleCode(code)
+    } else {
+      // Try to load stored tokens
+      loadCalendarTokens()
+    }
+  }, [session])
+
+  async function loadCalendarTokens() {
+    const stored = localStorage.getItem('gcal_tokens')
+    if (!stored) return
+    const tokens = JSON.parse(stored)
+    // Check if access token is still valid (expires_at stored in ms)
+    if (tokens.expires_at && Date.now() < tokens.expires_at) {
+      await loadCalEvents(tokens.access_token)
+    } else if (tokens.refresh_token) {
+      // Refresh the token
+      const fresh = await refreshToken(tokens.refresh_token)
+      if (fresh.access_token) {
+        const newTokens = {
+          ...tokens,
+          access_token: fresh.access_token,
+          expires_at: Date.now() + (fresh.expires_in * 1000)
+        }
+        localStorage.setItem('gcal_tokens', JSON.stringify(newTokens))
+        await loadCalEvents(fresh.access_token)
+      }
+    }
+  }
+
+  async function handleGoogleCode(code) {
+    setCalLoading(true)
+    setCalError(null)
+    try {
+      const tokens = await exchangeCode(code)
+      if (tokens.error) { setCalError(tokens.error); setCalLoading(false); return }
+      const stored = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_at: Date.now() + (tokens.expires_in * 1000)
+      }
+      localStorage.setItem('gcal_tokens', JSON.stringify(stored))
+      await loadCalEvents(tokens.access_token)
+    } catch(e) {
+      setCalError('Failed to connect Google Calendar')
+    }
+    setCalLoading(false)
+  }
+
+  async function loadCalEvents(access_token) {
+    setCalLoading(true)
+    setCalError(null)
+    try {
+      const data = await fetchEvents(access_token)
+      if (data.error) {
+        setCalError(data.error)
+        setCalConnected(false)
+      } else {
+        setCalEvents(data.events || [])
+        setCalConnected(true)
+      }
+    } catch(e) {
+      setCalError('Failed to load events')
+    }
+    setCalLoading(false)
+  }
+
+  function disconnectCalendar() {
+    localStorage.removeItem('gcal_tokens')
+    setCalConnected(false)
+    setCalEvents([])
+  }
 
   // ── Realtime sync ─────────────────────────────────────────
   useEffect(() => {
@@ -425,11 +534,21 @@ export default function App() {
 
   async function addBirthday() {
     const name = editVals.bd_name?.trim()
-    const date = editVals.bd_date
-    if (!name || !date) return
-    const { error } = await supabase.from('birthdays').insert({ name, birth_date: date, card_sent: false })
+    const month = editVals.bd_month
+    const day = editVals.bd_day
+    const year = editVals.bd_year?.trim()
+    if (!name || !month || !day) return
+    // Use 1900 as placeholder year when unknown — we'll check for this to hide age
+    const useYear = year ? year.padStart(4,'0') : '1900'
+    const dateStr = `${useYear}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`
+    const { error } = await supabase.from('birthdays').insert({
+      name,
+      birth_date: dateStr,
+      card_sent: false,
+      year_known: !!year
+    })
     if (error) { console.error('Birthday insert error:', error); alert('Error saving: ' + error.message); return }
-    setEditVals(v => ({...v, bd_name:'', bd_date:''}))
+    setEditVals(v => ({...v, bd_name:'', bd_month:'', bd_day:'', bd_year:''}))
     setOpenEdit(null)
     await loadAll(false)
   }
@@ -1151,32 +1270,101 @@ export default function App() {
       {/* ── CALENDAR ── */}
       {tab === 'calendar' && (
         <div className="section">
-          <p style={{fontSize:13,color:'var(--color-text-secondary)',marginBottom:'1rem',lineHeight:1.5}}>
-            Connect Google Calendar to see your real events here automatically.
-          </p>
-          <div className="card">
-            <div className="card-title">Upcoming events</div>
-            {[
-              {mo:'Jun',d:2,events:[{title:'Dentist — Jamie',time:'10:00 AM',cls:'ev-blue'}]},
-              {mo:'Jun',d:5,events:[{title:'Car insurance renewal',time:'All day',cls:'ev-purple'},{title:'Dinner with the Garcias',time:'7:00 PM',cls:'ev-teal'}]},
-              {mo:'Jun',d:20,events:[{title:'Date night',time:'7:00 PM',cls:'ev-blue'}]},
-            ].map(({mo:m,d,events}) => (
-              <div key={d} className="cal-day">
-                <div className="cal-date"><div className="cal-month">{m}</div><div className="cal-num">{d}</div></div>
-                <div className="cal-events">
-                  {events.map(ev => (
-                    <div key={ev.title} className={`cal-event ${ev.cls}`}>
-                      <div className="cal-event-title">{ev.title}</div>
-                      <div className="cal-event-time"><i className="ti ti-clock" style={{fontSize:12,verticalAlign:-1}} aria-hidden="true"></i> {ev.time}</div>
-                    </div>
-                  ))}
+
+          {/* Google Calendar connection */}
+          {!calConnected ? (
+            <div className="card" style={{textAlign:'center',padding:'1.5rem'}}>
+              <i className="ti ti-brand-google" style={{fontSize:32,color:'var(--color-text-secondary)',marginBottom:12,display:'block'}} aria-hidden="true"></i>
+              <div style={{fontSize:15,fontWeight:500,color:'var(--color-text-primary)',marginBottom:6}}>Connect Google Calendar</div>
+              <div style={{fontSize:13,color:'var(--color-text-secondary)',marginBottom:16,lineHeight:1.5}}>
+                See your upcoming events here automatically. Both of you can connect your own calendar.
+              </div>
+              {calError && <div style={{fontSize:13,color:'#D85A30',background:'#FCEBEB',padding:'8px 12px',borderRadius:'var(--border-radius-md)',marginBottom:12}}>{calError}</div>}
+              {calLoading
+                ? <div style={{display:'flex',justifyContent:'center'}}><div className="spinner"></div></div>
+                : <a href={getAuthUrl()} className="save-btn" style={{display:'inline-block',textDecoration:'none',padding:'10px 24px',width:'auto'}}>
+                    Connect Google Calendar
+                  </a>
+              }
+            </div>
+          ) : (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:11,background:'#EAF3DE',color:'#3B6D11',borderRadius:99,padding:'2px 10px',fontWeight:500}}>
+                    ✓ Google Calendar connected
+                  </span>
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  <button className="edit-btn" onClick={()=>loadCalEvents(JSON.parse(localStorage.getItem('gcal_tokens')||'{}').access_token)}>
+                    <i className="ti ti-refresh" aria-hidden="true"></i> Refresh
+                  </button>
+                  <button className="edit-btn" onClick={disconnectCalendar} style={{color:'#D85A30'}}>
+                    Disconnect
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-          <button className="add-btn" style={{width:'100%',justifyContent:'center',padding:10}}>
-            <i className="ti ti-brand-google" aria-hidden="true"></i> Connect Google Calendar (Phase 3)
-          </button>
+
+              {calLoading && <div style={{display:'flex',justifyContent:'center',padding:'2rem'}}><div className="spinner"></div></div>}
+
+              {!calLoading && calEvents.length === 0 && (
+                <div className="card"><div className="empty-state">No upcoming events in the next 30 days</div></div>
+              )}
+
+              {!calLoading && calEvents.length > 0 && (() => {
+                // Group events by date
+                const byDate = calEvents.reduce((groups, ev) => {
+                  const dateKey = ev.start.split('T')[0]
+                  if (!groups[dateKey]) groups[dateKey] = []
+                  groups[dateKey].push(ev)
+                  return groups
+                }, {})
+
+                return (
+                  <div className="card">
+                    <div className="card-title">Upcoming events</div>
+                    {Object.entries(byDate).map(([dateKey, events]) => {
+                      const d = new Date(dateKey + 'T00:00:00')
+                      const isToday = dateKey === today.toISOString().split('T')[0]
+                      const isTomorrow = dateKey === new Date(today.getTime() + 86400000).toISOString().split('T')[0]
+                      return (
+                        <div key={dateKey} className="cal-day">
+                          <div className="cal-date">
+                            <div className="cal-month">{d.toLocaleDateString('en-US',{month:'short'})}</div>
+                            <div className="cal-num" style={{color: isToday?'#1D9E75':'var(--color-text-primary)'}}>{d.getDate()}</div>
+                            {isToday && <div style={{fontSize:9,color:'#1D9E75',fontWeight:600}}>TODAY</div>}
+                            {isTomorrow && <div style={{fontSize:9,color:'var(--color-text-secondary)',fontWeight:600}}>TMW</div>}
+                          </div>
+                          <div className="cal-events">
+                            {events.map(ev => {
+                              const timeStr = ev.allDay ? 'All day' : new Date(ev.start).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
+                              // Pick a color class based on calendar color
+                              const colorMap = {'#4285f4':'ev-blue','#0b8043':'ev-teal','#8e24aa':'ev-purple','#e67c73':'ev-amber','#f6c026':'ev-amber'}
+                              const cls = colorMap[ev.color] || 'ev-blue'
+                              return (
+                                <div key={ev.id} className={`cal-event ${cls}`} style={{borderLeft:`3px solid ${ev.color}`}}>
+                                  <div className="cal-event-title">{ev.title}</div>
+                                  <div className="cal-event-time">
+                                    <i className="ti ti-clock" style={{fontSize:12,verticalAlign:-1}} aria-hidden="true"></i> {timeStr}
+                                    {ev.calendar && <span style={{opacity:0.7}}> · {ev.calendar}</span>}
+                                  </div>
+                                  {ev.location && <div style={{fontSize:11,marginTop:2,opacity:0.8}}>📍 {ev.location}</div>}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
+              <p style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:'0.5rem',textAlign:'center'}}>
+                Your husband can connect his calendar from his phone too — events from both will appear here.
+              </p>
+            </div>
+          )}
 
           {/* Birthdays */}
           <div className="section-label" style={{marginTop:'1.5rem'}}>Birthdays</div>
@@ -1194,7 +1382,21 @@ export default function App() {
                   <input type="text" placeholder="Name" value={editVals.bd_name||''} onChange={ev('bd_name')} />
                 </div>
                 <div className="form-row">
-                  <input type="date" value={editVals.bd_date||''} onChange={ev('bd_date')} />
+                  <select value={editVals.bd_month||''} onChange={ev('bd_month')} style={{flex:1}}>
+                    <option value="">Month</option>
+                    {['January','February','March','April','May','June','July','August','September','October','November','December'].map((m,i) => (
+                      <option key={i+1} value={String(i+1).padStart(2,'0')}>{m}</option>
+                    ))}
+                  </select>
+                  <select value={editVals.bd_day||''} onChange={ev('bd_day')} style={{flex:1}}>
+                    <option value="">Day</option>
+                    {Array.from({length:31},(_,i)=>i+1).map(d => (
+                      <option key={d} value={String(d).padStart(2,'0')}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-row">
+                  <input type="number" placeholder="Year (optional — for age)" value={editVals.bd_year||''} onChange={ev('bd_year')} min="1900" max="2025" />
                 </div>
                 <button className="save-btn" onClick={addBirthday}>Add birthday</button>
               </div>
@@ -1245,7 +1447,7 @@ export default function App() {
                     <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:3}}>
                       Turning {bd.turningAge} · {bd.nextBday.toLocaleDateString('en-US',{month:'long',day:'numeric'})}
                     </div>
-                    {/* Card sent toggle */}
+                      {/* Card sent toggle */}
                     <button
                       onClick={()=>toggleCardSent(bd)}
                       style={{marginTop:6,background:'none',border:'none',cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontSize:12,padding:0,
@@ -1254,28 +1456,12 @@ export default function App() {
                       <i className={`ti ${bd.card_sent?'ti-circle-check':'ti-circle'}`} style={{fontSize:15}} aria-hidden="true"></i>
                       {bd.card_sent ? 'Card sent ✓' : 'Mark card sent'}
                     </button>
-                    {/* Add card to-do if upcoming and not sent */}
-                    {bd.upcoming && !bd.card_sent && (() => {
-                      const taskText = `Send birthday card — ${bd.name}`
-                      const exists = todos.some(t => t.text === taskText && t.status !== 'done')
-                      return !exists ? (
-                        <button
-                          onClick={async ()=>{
-                            await supabase.from('todos').insert({ text: taskText, status: 'todo', assigned_to: '', due_label: bd.dueStr })
-                            await loadAll(false)
-                          }}
-                          style={{marginTop:4,background:'none',border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontSize:12,padding:'3px 8px',color:'var(--color-text-secondary)',fontFamily:'inherit'}}
-                        >
-                          <i className="ti ti-plus" style={{fontSize:12}} aria-hidden="true"></i>
-                          Add "send card" to To-do
-                        </button>
-                      ) : (
-                        <div style={{marginTop:4,fontSize:12,color:'#BA7517',display:'flex',alignItems:'center',gap:4}}>
-                          <i className="ti ti-checkbox" style={{fontSize:12}} aria-hidden="true"></i>
-                          Card task added to To-do
-                        </div>
-                      )
-                    })()}
+                    {bd.upcoming && !bd.card_sent && (
+                      <div style={{marginTop:4,fontSize:12,color:'var(--color-text-secondary)',display:'flex',alignItems:'center',gap:4}}>
+                        <i className="ti ti-checkbox" style={{fontSize:12}} aria-hidden="true"></i>
+                        Card reminder added to To-do automatically
+                      </div>
+                    )}
                   </div>
 
                   {/* Delete */}
