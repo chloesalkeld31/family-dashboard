@@ -23,12 +23,7 @@ export async function exchangeCode(code) {
   const res = await fetch('/api/google-auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'exchange',
-      code,
-      client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-      client_secret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET,
-    }),
+    body: JSON.stringify({ action: 'exchange', code }),
   })
   return res.json()
 }
@@ -37,12 +32,7 @@ export async function refreshToken(refresh_token) {
   const res = await fetch('/api/google-auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'refresh',
-      refresh_token,
-      client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-      client_secret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET,
-    }),
+    body: JSON.stringify({ action: 'refresh', refresh_token }),
   })
   return res.json()
 }
