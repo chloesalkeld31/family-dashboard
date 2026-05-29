@@ -534,21 +534,11 @@ export default function App() {
 
   async function addBirthday() {
     const name = editVals.bd_name?.trim()
-    const month = editVals.bd_month
-    const day = editVals.bd_day
-    const year = editVals.bd_year?.trim()
-    if (!name || !month || !day) return
-    // Use 1900 as placeholder year when unknown — we'll check for this to hide age
-    const useYear = year ? year.padStart(4,'0') : '1900'
-    const dateStr = `${useYear}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`
-    const { error } = await supabase.from('birthdays').insert({
-      name,
-      birth_date: dateStr,
-      card_sent: false,
-      year_known: !!year
-    })
+    const date = editVals.bd_date
+    if (!name || !date) return
+    const { error } = await supabase.from('birthdays').insert({ name, birth_date: date, card_sent: false, year_known: true })
     if (error) { console.error('Birthday insert error:', error); alert('Error saving: ' + error.message); return }
-    setEditVals(v => ({...v, bd_name:'', bd_month:'', bd_day:'', bd_year:''}))
+    setEditVals(v => ({...v, bd_name:'', bd_date:''}))
     setOpenEdit(null)
     await loadAll(false)
   }
@@ -1382,21 +1372,7 @@ export default function App() {
                   <input type="text" placeholder="Name" value={editVals.bd_name||''} onChange={ev('bd_name')} />
                 </div>
                 <div className="form-row">
-                  <select value={editVals.bd_month||''} onChange={ev('bd_month')} style={{flex:1}}>
-                    <option value="">Month</option>
-                    {['January','February','March','April','May','June','July','August','September','October','November','December'].map((m,i) => (
-                      <option key={i+1} value={String(i+1).padStart(2,'0')}>{m}</option>
-                    ))}
-                  </select>
-                  <select value={editVals.bd_day||''} onChange={ev('bd_day')} style={{flex:1}}>
-                    <option value="">Day</option>
-                    {Array.from({length:31},(_,i)=>i+1).map(d => (
-                      <option key={d} value={String(d).padStart(2,'0')}>{d}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-row">
-                  <input type="number" placeholder="Year (optional — for age)" value={editVals.bd_year||''} onChange={ev('bd_year')} min="1900" max="2025" />
+                  <input type="date" value={editVals.bd_date||''} onChange={ev('bd_date')} />
                 </div>
                 <button className="save-btn" onClick={addBirthday}>Add birthday</button>
               </div>
