@@ -157,6 +157,7 @@ export default function App() {
   const [variable, setVariable] = useState([])
   const [todos, setTodos] = useState([])
   const [shoppingList, setShoppingList] = useState([])
+  const [birthdays, setBirthdays] = useState([])
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -193,7 +194,7 @@ export default function App() {
     const { data: { session: currentSession } } = await supabase.auth.getSession()
     if (!currentSession) return
     if (showSpinner) setLoading(true)
-    const [ja, dep, cc, fx, vx, td, sl] = await Promise.all([
+    const [ja, dep, cc, fx, vx, td, sl, bd] = await Promise.all([
       supabase.from('joint_account').select('*').limit(1),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
@@ -201,6 +202,7 @@ export default function App() {
       supabase.from('variable_expenses').select('*').order('sort_order'),
       supabase.from('todos').select('*').order('created_at'),
       supabase.from('shopping_lists').select('*').order('created_at'),
+      supabase.from('birthdays').select('*').order('birth_date'),
     ])
     if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
@@ -209,6 +211,7 @@ export default function App() {
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
     if (td.data) setTodos(td.data)
     if (sl.data) setShoppingList(sl.data)
+    if (bd.data) setBirthdays(bd.data)
     setLoading(false)
   }, [])
 
@@ -416,7 +419,25 @@ export default function App() {
     await loadAll(false)
   }
 
-  async function addShoppingItem() {
+  async function addBirthday() {
+    const name = editVals.bd_name?.trim()
+    const date = editVals.bd_date
+    if (!name || !date) return
+    await supabase.from('birthdays').insert({ name, birth_date: date, card_sent: false })
+    setEditVals(v => ({...v, bd_name:'', bd_date:''}))
+    toggleEdit('add_birthday')
+    await loadAll(false)
+  }
+
+  async function toggleCardSent(bd) {
+    await supabase.from('birthdays').update({ card_sent: !bd.card_sent, updated_at: new Date() }).eq('id', bd.id)
+    await loadAll(false)
+  }
+
+  async function deleteBirthday(bd) {
+    await supabase.from('birthdays').delete().eq('id', bd.id)
+    await loadAll(false)
+  }
     const text = editVals.new_shop_item?.trim()
     if (!text) return
     await supabase.from('shopping_lists').insert({ list: activeShoppingList, item: text, checked: false })
@@ -585,20 +606,46 @@ export default function App() {
               })
             ].sort((a,b) => a.due - b.due)
 
-            // Each bill checked independently:
-            // joint + deposits landing before due date - just this bill = surplus/shortfall
+            // Simulate paying bills in chronological order with deposits landing on schedule
+            // Track running balance and flag anything that would overdraw
             const actionItems = []
+            let runningBal = joint
+
+            // Build a timeline of all events (deposits and bills) sorted by date
+            const timeline = []
+
+            // Add deposits
+            deposits.forEach(dep => {
+              let d = new Date(yr, mo, dep.expected_day)
+              if (d <= today) d = new Date(yr, mo+1, dep.expected_day)
+              timeline.push({ date: d, type: 'deposit', amount: dep.amount, name: `Deposit` })
+            })
+
+            // Add all bills
             allBillItems.forEach(bill => {
-              const projAtDue = joint + depositsBeforeDue(deposits, bill.due)
-              const surplus = projAtDue - bill.amount
-              if (surplus < 0) {
-                actionItems.push({
-                  ...bill,
-                  shortfall: Math.abs(surplus),
-                  projAtDue,
-                  daysUntilDue: daysUntil(bill.due),
-                  dueStr: bill.due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
-                })
+              timeline.push({ date: bill.due, type: 'bill', amount: bill.amount, name: bill.name, id: bill.id })
+            })
+
+            // Sort by date
+            timeline.sort((a,b) => a.date - b.date)
+
+            // Simulate
+            timeline.forEach(event => {
+              if (event.type === 'deposit') {
+                runningBal += event.amount
+              } else {
+                runningBal -= event.amount
+                if (runningBal < 0) {
+                  actionItems.push({
+                    name: event.name,
+                    id: event.id,
+                    shortfall: Math.abs(runningBal),
+                    daysUntilDue: daysUntil(event.date),
+                    dueStr: event.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                  })
+                  // Reset to 0 so subsequent items show their own shortfall from this point
+                  runningBal = 0
+                }
               }
             })
 
@@ -614,7 +661,7 @@ export default function App() {
             // Total needed = max shortfall across all items (they share the same account)
             // Find the earliest deadline and the amount needed by then
             const earliest = actionItems[0]
-            const totalNeeded = Math.max(...actionItems.map(i => i.shortfall))
+            const totalNeeded = actionItems.reduce((s,i) => s + i.shortfall, 0)
 
             return (
               <div className="exp-card" style={{borderColor:'#D85A30',marginBottom:'1rem'}}>
@@ -1123,6 +1170,92 @@ export default function App() {
           <button className="add-btn" style={{width:'100%',justifyContent:'center',padding:10}}>
             <i className="ti ti-brand-google" aria-hidden="true"></i> Connect Google Calendar (Phase 3)
           </button>
+
+          {/* Birthdays */}
+          <div className="section-label" style={{marginTop:'1.5rem'}}>Birthdays</div>
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title" style={{marginBottom:0}}>Upcoming birthdays</span>
+              <button className="add-btn" onClick={()=>toggleEdit('add_birthday')}>
+                <i className="ti ti-plus" aria-hidden="true"></i> Add
+              </button>
+            </div>
+
+            {openEdit==='add_birthday' && (
+              <div className="add-form open">
+                <div className="form-row">
+                  <input type="text" placeholder="Name" value={editVals.bd_name||''} onChange={ev('bd_name')} />
+                </div>
+                <div className="form-row">
+                  <input type="date" value={editVals.bd_date||''} onChange={ev('bd_date')} />
+                </div>
+                <button className="save-btn" onClick={addBirthday}>Add birthday</button>
+              </div>
+            )}
+
+            {(() => {
+              if (!birthdays.length) return <div className="empty-state">No birthdays added yet</div>
+
+              // Calculate next occurrence of each birthday and sort
+              const withNext = birthdays.map(bd => {
+                const birth = new Date(bd.birth_date + 'T00:00:00')
+                const thisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate())
+                const nextBday = thisYear <= today
+                  ? new Date(today.getFullYear()+1, birth.getMonth(), birth.getDate())
+                  : thisYear
+                const daysAway = daysUntil(nextBday)
+                const turningAge = nextBday.getFullYear() - birth.getFullYear()
+                const upcoming = daysAway <= 30
+                return { ...bd, nextBday, daysAway, turningAge, upcoming, birth }
+              }).sort((a,b) => a.daysAway - b.daysAway)
+
+              return withNext.map((bd,i) => (
+                <div key={bd.id} style={{
+                  display:'flex',alignItems:'flex-start',gap:12,padding:'12px 0',
+                  borderBottom: i<withNext.length-1?'0.5px solid var(--color-border-tertiary)':'none'
+                }}>
+                  {/* Date badge */}
+                  <div style={{textAlign:'center',minWidth:40,flexShrink:0}}>
+                    <div style={{fontSize:10,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px'}}>
+                      {bd.nextBday.toLocaleDateString('en-US',{month:'short'})}
+                    </div>
+                    <div style={{fontSize:20,fontWeight:500,lineHeight:1.1,color:'var(--color-text-primary)'}}>
+                      {bd.nextBday.getDate()}
+                    </div>
+                  </div>
+
+                  {/* Info */}
+                  <div style={{flex:1}}>
+                    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                      <span style={{fontSize:14,fontWeight:500,color:'var(--color-text-primary)'}}>{bd.name}</span>
+                      {bd.upcoming && (
+                        <span style={{fontSize:11,background:'#EEEDFE',color:'#3C3489',borderRadius:99,padding:'1px 8px',fontWeight:500}}>
+                          {bd.daysAway === 0 ? '🎂 Today!' : `In ${bd.daysAway}d`}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:3}}>
+                      Turning {bd.turningAge} · {bd.nextBday.toLocaleDateString('en-US',{month:'long',day:'numeric'})}
+                    </div>
+                    {/* Card sent toggle */}
+                    <button
+                      onClick={()=>toggleCardSent(bd)}
+                      style={{marginTop:6,background:'none',border:'none',cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontSize:12,padding:0,
+                        color: bd.card_sent?'#1D9E75':'var(--color-text-secondary)',fontFamily:'inherit'}}
+                    >
+                      <i className={`ti ${bd.card_sent?'ti-circle-check':'ti-circle'}`} style={{fontSize:15}} aria-hidden="true"></i>
+                      {bd.card_sent ? 'Card sent ✓' : 'Mark card sent'}
+                    </button>
+                  </div>
+
+                  {/* Delete */}
+                  <button onClick={()=>deleteBirthday(bd)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:14,opacity:0.4,flexShrink:0}}>
+                    <i className="ti ti-x" aria-hidden="true"></i>
+                  </button>
+                </div>
+              ))
+            })()}
+          </div>
         </div>
       )}
     </div>
