@@ -10,7 +10,6 @@ export default async function handler(req, res) {
   const { code, action } = req.body
 
   if (action === 'exchange') {
-    // Debug — log what we're sending (remove after fix)
     console.log('Client ID present:', !!process.env.GOOGLE_CLIENT_ID)
     console.log('Client Secret present:', !!process.env.GOOGLE_CLIENT_SECRET)
     console.log('Code present:', !!code)
@@ -27,7 +26,8 @@ export default async function handler(req, res) {
       body: params,
     })
     const data = await response.json()
-    if (data.error) return res.status(400).json({ error: data.error_description })
+    console.log('Google token response:', JSON.stringify(data))
+    if (data.error) return res.status(400).json({ error: data.error, detail: data.error_description })
     return res.status(200).json(data)
   }
 
