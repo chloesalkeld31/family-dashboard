@@ -46,13 +46,17 @@ function getFixedDueDate(f) {
 // ── Finance logic ─────────────────────────────────────────────
 function cardRunRate(card) {
   const hist = [card.history_1mo, card.history_2mo, card.history_3mo].filter(v => v != null)
-  if (!hist.length) return { projected: card.balance, dailyRate: 0, expectedNow: 0, paceOver: false, remainingSpend: 0, avg: 0, daysElapsed: 0, daysToTarget: 0, cycleLength: 30, paceRatio: 1 }
+  const stmtBal = card.statement_balance ?? card.balance
+  // Current cycle charges = what's been spent since last statement closed
+  const cycleCharges = Math.max(0, card.balance - stmtBal)
+
+  if (!hist.length) return { projected: cycleCharges, dailyRate: 0, expectedNow: 0, paceOver: false, remainingSpend: 0, avg: 0, daysElapsed: 0, daysToTarget: 0, cycleLength: 30, paceRatio: 1, cycleCharges }
   const avg = hist.reduce((s,v) => s+v, 0) / hist.length
 
   // Use real statement close day if set, otherwise assume 1st of month
   const closeDay = card.statement_close_day || 1
 
-  // Find the most recent statement close date (the cycle start)
+  // Cycle started at the most recent statement close date
   let cycleStart = new Date(yr, mo, closeDay)
   if (cycleStart > today) cycleStart = new Date(yr, mo-1, closeDay)
 
@@ -61,16 +65,24 @@ function cardRunRate(card) {
   const cycleLength = Math.round((cycleEnd - cycleStart) / 86400000)
 
   const daysElapsed = Math.max(1, Math.round((today - cycleStart) / 86400000))
+  const daysToClose = Math.max(0, Math.round((cycleEnd - today) / 86400000))
   const dailyRate = avg / cycleLength
+  // Expected cycle charges by today based on historical rate
   const expectedNow = dailyRate * daysElapsed
+  // Project remaining spend until next statement close
+  const remainingSpend = dailyRate * daysToClose
+  // Projected total for this cycle = actual charges so far + projected remaining
+  const projected = cycleCharges + remainingSpend
 
+  // Pace: are we spending faster than historical average suggests?
+  const paceOver = expectedNow > 0 && cycleCharges > expectedNow * (1 + PACE_WARN)
+  const paceRatio = expectedNow > 0 ? cycleCharges / expectedNow : 1
+
+  // Keep daysToTarget for coverage block (days to due date)
   const dueDate = nextOccurrence(card.due_day)
   const daysToTarget = Math.max(0, daysUntil(dueDate))
-  const remainingSpend = dailyRate * daysToTarget
-  const projected = card.balance + remainingSpend
-  const paceOver = expectedNow > 0 && card.balance > expectedNow * (1 + PACE_WARN)
-  const paceRatio = expectedNow > 0 ? card.balance / expectedNow : 1
-  return { projected, dailyRate, expectedNow, paceOver, paceRatio, remainingSpend, avg, daysElapsed, daysToTarget, cycleLength, cycleStart, cycleEnd }
+
+  return { projected, dailyRate, expectedNow, paceOver, paceRatio, remainingSpend, avg, daysElapsed, daysToTarget, daysToClose, cycleLength, cycleStart, cycleEnd, cycleCharges }
 }
 
 function depositsBeforeDue(deposits, dueDate) {
@@ -389,10 +401,18 @@ export default function App() {
     await loadAll(false)
   }
 
-  async function cycleTodoStatus(todo) {
-    const order = ['todo','inprogress','done']
-    const next = order[(order.indexOf(todo.status)+1)%3]
-    await supabase.from('todos').update({ status: next, updated_at: new Date() }).eq('id', todo.id)
+  async function setTodoStatus(todo, newStatus) {
+    const updates = { status: newStatus, updated_at: new Date() }
+    // When marked done, record the time so we can auto-archive after 24h
+    if (newStatus === 'done') updates.archived_at = new Date()
+    // If moving back from done, clear the archived_at
+    if (newStatus !== 'done') updates.archived_at = null
+    await supabase.from('todos').update(updates).eq('id', todo.id)
+    await loadAll(false)
+  }
+
+  async function deleteTodo(todo) {
+    await supabase.from('todos').delete().eq('id', todo.id)
     await loadAll(false)
   }
 
@@ -470,8 +490,8 @@ export default function App() {
     </div>
   )
 
-  const statusLabels = {todo:'To do',inprogress:'In progress',done:'Done'}
-  const statusClass = {todo:'badge-todo',inprogress:'badge-inprogress',done:'badge-done'}
+  const statusLabels = {todo:'To do',inprogress:'In progress',done:'Done',blocked:'Blocked'}
+  const statusClass = {todo:'badge-todo',inprogress:'badge-inprogress',done:'badge-done',blocked:'badge-blocked'}
 
   return (
     <div className="app">
@@ -654,8 +674,8 @@ export default function App() {
             const closeDate = nextCloseDate(card)
             const closeDateStr = closeDate.toLocaleDateString('en-US',{month:'short',day:'numeric'})
             const rr = cardRunRate(card)
-            const pctElapsed = Math.min(100, Math.round((rr.daysElapsed/30)*100))
-            const pctBalance = rr.avg>0 ? Math.min(130, Math.round((card.balance/rr.avg)*100)) : 0
+            const pctElapsed = Math.min(100, Math.round((rr.daysElapsed/rr.cycleLength)*100))
+            const pctCycleCharges = rr.avg>0 ? Math.min(130, Math.round((rr.cycleCharges/rr.avg)*100)) : 0
             const stmtBal = card.statement_balance ?? card.balance
             return (
               <div key={card.id} className="exp-card">
@@ -667,27 +687,35 @@ export default function App() {
                     <button className="edit-btn" onClick={()=>{ setEditVals(v=>({...v, [`cn_${card.id}`]:card.name, [`cb_${card.id}`]:String(card.balance), [`cs_${card.id}`]:String(stmtBal), [`cc_${card.id}`]:String(card.statement_close_day??''), [`cd_${card.id}`]:String(card.due_day), [`ch1_${card.id}`]:String(card.history_1mo??''), [`ch2_${card.id}`]:String(card.history_2mo??''), [`ch3_${card.id}`]:String(card.history_3mo??'')})); toggleEdit(`card_${card.id}`) }}><i className="ti ti-edit" aria-hidden="true"></i></button>
                   </div>
                 </div>
+
+                {/* Statement & payment section */}
                 <div className="detail-row"><span className="detail-label">Statement balance (amount due)</span><span className="detail-value" style={{fontSize:15}}>{fmt(stmtBal)}</span></div>
                 <div className="detail-row"><span className="detail-label">Current balance (incl. new charges)</span><span className="detail-value">{fmt(card.balance)}</span></div>
-                <div className="detail-row"><span className="detail-label">Remaining projected spend ({rr.daysToTarget}d × {fmtR(rr.dailyRate)}/d)</span><span className="detail-value" style={{color:'#BA7517'}}>+{fmt(rr.remainingSpend)}</span></div>
-                <div className="detail-row"><span className="detail-label">Projected balance at due date</span><span className="detail-value" style={{fontSize:15,fontWeight:500}}>{fmt(rr.projected)}</span></div>
 
+                {/* Current cycle spending section */}
                 {rr.avg > 0 && (
-                  <div className="pace-bar-wrap">
-                    <div className="pace-bar-label">
-                      <span>Pace — day {rr.daysElapsed} of {rr.cycleLength}</span>
-                      <span style={{color:rr.paceOver?'#D85A30':'var(--color-text-secondary)'}}>{Math.round(rr.paceRatio*100)}% of expected</span>
+                  <div style={{marginTop:10,paddingTop:10,borderTop:'0.5px solid var(--color-border-tertiary)'}}>
+                    <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:8}}>This cycle's spending (since statement closed)</div>
+                    <div className="detail-row"><span className="detail-label">Charges since statement</span><span className="detail-value">{fmt(rr.cycleCharges)}</span></div>
+                    <div className="detail-row"><span className="detail-label">Projected remaining ({rr.daysToClose}d × {fmtR(rr.dailyRate)}/d)</span><span className="detail-value" style={{color:'#BA7517'}}>+{fmt(rr.remainingSpend)}</span></div>
+                    <div className="detail-row"><span className="detail-label">Projected cycle total</span><span className="detail-value" style={{fontWeight:500}}>{fmt(rr.projected)}</span></div>
+                    <div className="pace-bar-wrap" style={{marginTop:8}}>
+                      <div className="pace-bar-label">
+                        <span>Pace — day {rr.daysElapsed} of {rr.cycleLength}</span>
+                        <span style={{color:rr.paceOver?'#D85A30':'var(--color-text-secondary)'}}>{Math.round(rr.paceRatio*100)}% of expected</span>
+                      </div>
+                      <div className="pace-bar-bg">
+                        <div className="pace-bar-fill" style={{width:`${Math.min(100,pctCycleCharges)}%`,background:rr.paceOver?'#D85A30':'#1D9E75'}}></div>
+                        <div className="pace-bar-marker" style={{left:`${pctElapsed}%`}}></div>
+                      </div>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--color-text-secondary)',marginTop:3}}>
+                        <span>This cycle: {fmt(rr.cycleCharges)}</span><span>Expected today: {fmt(rr.expectedNow)}</span>
+                      </div>
+                      {rr.paceOver && <div className="warn-note"><i className="ti ti-alert-triangle" style={{fontSize:12,flexShrink:0}} aria-hidden="true"></i> Spending {Math.round((rr.paceRatio-1)*100)}% faster than usual this cycle</div>}
                     </div>
-                    <div className="pace-bar-bg">
-                      <div className="pace-bar-fill" style={{width:`${Math.min(100,pctBalance)}%`,background:rr.paceOver?'#D85A30':'#1D9E75'}}></div>
-                      <div className="pace-bar-marker" style={{left:`${pctElapsed}%`}}></div>
-                    </div>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--color-text-secondary)',marginTop:3}}>
-                      <span>Current: {fmt(card.balance)}</span><span>Expected today: {fmt(rr.expectedNow)}</span>
-                    </div>
-                    {rr.paceOver && <div className="warn-note"><i className="ti ti-alert-triangle" style={{fontSize:12,flexShrink:0}} aria-hidden="true"></i> Spending {Math.round((rr.paceRatio-1)*100)}% faster than usual</div>}
                   </div>
                 )}
+
                 <CoverageBlock dueDate={due} amount={stmtBal} deposits={deposits} joint={joint} otherBillsBefore={billsDueBeforeDate(due, card.id)} />
                 {openEdit===`card_${card.id}` && (
                   <div className="inline-edit open">
@@ -696,7 +724,6 @@ export default function App() {
                     <div className="edit-section-label">Dates</div>
                     <div className="edit-row"><label>Statement close day</label><input type="number" min="1" max="31" value={editVals[`cc_${card.id}`]??''} onChange={ev(`cc_${card.id}`)} /></div>
                     <div className="edit-row"><label>Due day of month</label><input type="number" min="1" max="31" value={editVals[`cd_${card.id}`]??''} onChange={ev(`cd_${card.id}`)} /></div>
-
                     <div className="edit-section-label">Balances</div>
                     <div className="edit-row"><label>Statement balance ($)</label><input type="number" min="0" step="0.01" value={editVals[`cs_${card.id}`]??''} onChange={ev(`cs_${card.id}`)} /></div>
                     <div className="edit-row"><label>Current balance ($)</label><input type="number" min="0" step="0.01" value={editVals[`cb_${card.id}`]??''} onChange={ev(`cb_${card.id}`)} /></div>
@@ -817,17 +844,91 @@ export default function App() {
                 <button className="save-btn" onClick={addTodo}>Add task</button>
               </div>
             )}
-            {todos.length === 0 && <div className="empty-state">No tasks yet — add your first one above</div>}
-            {todos.map(t => (
-              <div key={t.id} className="todo-item">
-                <span className={`status-badge ${statusClass[t.status]}`}>{statusLabels[t.status]}</span>
-                <div style={{flex:1}}>
-                  <div className={`todo-text ${t.status==='done'?'done-text':''}`}>{t.text}</div>
-                  <div className="todo-meta">{[t.assigned_to, t.due_label].filter(Boolean).join(' · ')}</div>
-                </div>
-                <button className="status-cycle" onClick={()=>cycleTodoStatus(t)} aria-label="Cycle status"><i className="ti ti-refresh" aria-hidden="true"></i></button>
-              </div>
-            ))}
+            {(() => {
+              const now = new Date()
+              const activeTodos = todos.filter(t => {
+                if (t.status !== 'done') return true
+                if (!t.archived_at) return true
+                // Keep in active if done less than 24h ago
+                return (now - new Date(t.archived_at)) < 24 * 60 * 60 * 1000
+              })
+              const archivedTodos = todos.filter(t => {
+                if (t.status !== 'done') return false
+                if (!t.archived_at) return false
+                return (now - new Date(t.archived_at)) >= 24 * 60 * 60 * 1000
+              })
+
+              // Group archived by week
+              const archivedByWeek = archivedTodos.reduce((groups, t) => {
+                const d = new Date(t.archived_at)
+                const weekStart = new Date(d)
+                weekStart.setDate(d.getDate() - d.getDay())
+                weekStart.setHours(0,0,0,0)
+                const key = weekStart.toISOString()
+                const label = `Week of ${weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
+                if (!groups[key]) groups[key] = { label, items: [] }
+                groups[key].items.push(t)
+                return groups
+              }, {})
+
+              const statusOptions = [
+                { value: 'todo', label: 'To do', cls: 'badge-todo' },
+                { value: 'inprogress', label: 'In progress', cls: 'badge-inprogress' },
+                { value: 'done', label: 'Done', cls: 'badge-done' },
+                { value: 'blocked', label: 'Blocked', cls: 'badge-blocked' },
+              ]
+
+              return (
+                <>
+                  {activeTodos.length === 0 && <div className="empty-state">No active tasks</div>}
+                  {activeTodos.map(t => (
+                    <div key={t.id} className="todo-item">
+                      <div style={{flex:1}}>
+                        <div className={`todo-text ${t.status==='done'?'done-text':''}`}>{t.text}</div>
+                        <div className="todo-meta">{[t.assigned_to, t.due_label].filter(Boolean).join(' · ')}</div>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                        <select
+                          value={t.status}
+                          onChange={e=>setTodoStatus(t, e.target.value)}
+                          style={{fontSize:11,padding:'3px 6px',borderRadius:'99px',fontWeight:500,cursor:'pointer',width:'auto',
+                            background: t.status==='todo'?'#F1EFE8':t.status==='inprogress'?'#FAEEDA':t.status==='done'?'#EAF3DE':'#FCEBEB',
+                            color: t.status==='todo'?'#5F5E5A':t.status==='inprogress'?'#854F0B':t.status==='done'?'#3B6D11':'#A32D2D',
+                            border: 'none'}}
+                        >
+                          {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                        <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:14,opacity:0.4}}>
+                          <i className="ti ti-x" aria-hidden="true"></i>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {Object.keys(archivedByWeek).length > 0 && (
+                    <div style={{marginTop:16}}>
+                      <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>Archive</div>
+                      {Object.entries(archivedByWeek).sort((a,b)=>b[0].localeCompare(a[0])).map(([key,week]) => (
+                        <div key={key} style={{marginBottom:12}}>
+                          <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:6}}>{week.label}</div>
+                          {week.items.map(t => (
+                            <div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 0',borderBottom:'0.5px solid var(--color-border-tertiary)',opacity:0.5}}>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:14,textDecoration:'line-through',color:'var(--color-text-secondary)'}}>{t.text}</div>
+                                <div className="todo-meta">{[t.assigned_to, t.due_label].filter(Boolean).join(' · ')}</div>
+                              </div>
+                              <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:14,opacity:0.4}}>
+                                <i className="ti ti-x" aria-hidden="true"></i>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
       )}
