@@ -558,17 +558,107 @@ export default function App() {
             </div>
           ))}
 
-          {/* Banner */}
-          <div className={`banner ${totalShortfall===0&&leftover>=0?'banner-good':totalShortfall>0?'banner-bad':'banner-warn'}`}>
-            <i className={`ti ${totalShortfall===0&&leftover>=0?'ti-circle-check':totalShortfall>0?'ti-alert-circle':'ti-alert-triangle'}`} style={{fontSize:20,flexShrink:0,marginTop:1}} aria-hidden="true"></i>
-            <span>
-              {totalShortfall===0&&leftover>=0
-                ? `All expenses covered.${leftover>=500?' '+fmt(leftover)+' left — extra mortgage payment possible.':''}`
-                : totalShortfall>0
-                ? `Some expenses may not be covered. Add ${fmt(totalShortfall)} to the joint account.`
-                : `Tight month — ${fmt(leftover)} left after all bills.`}
-            </span>
-          </div>
+          {/* Action items — what needs to be added and by when */}
+          {(() => {
+            // Build a chronological list of all bills with their shortfalls
+            const allBillItems = [
+              ...cards.map(c => ({
+                name: c.name,
+                due: nextOccurrence(c.due_day),
+                amount: c.statement_balance ?? c.balance,
+                id: `card_${c.id}`
+              })),
+              ...fixed.map(f => ({
+                name: f.name,
+                due: getFixedDueDate(f),
+                amount: f.amount + (f.extra_payment||0),
+                id: `fixed_${f.id}`
+              })),
+              ...variable.map(v => {
+                const e = seasonalEstimate(v)
+                return {
+                  name: v.name,
+                  due: nextOccurrence(v.scheduled_day),
+                  amount: v.current_bill != null ? v.current_bill : (e||0),
+                  id: `var_${v.id}`
+                }
+              })
+            ].sort((a,b) => a.due - b.due)
+
+            // For each bill, calculate what the joint balance will be at that point
+            // accounting for deposits and previous bills in sequence
+            let runningBalance = joint
+            const actionItems = []
+            allBillItems.forEach(bill => {
+              const deps = depositsBeforeDue(deposits, bill.due)
+              const otherBills = billsDueBeforeDate(bill.due,
+                bill.id.startsWith('card_') ? bill.id.replace('card_','') : null)
+              const projAtDue = joint + deps - otherBills
+              const surplus = projAtDue - bill.amount
+              if (surplus < 0) {
+                actionItems.push({
+                  ...bill,
+                  shortfall: Math.abs(surplus),
+                  projAtDue,
+                  daysUntilDue: daysUntil(bill.due),
+                  dueStr: bill.due.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                })
+              }
+            })
+
+            if (actionItems.length === 0) {
+              return (
+                <div className="banner banner-good">
+                  <i className="ti ti-circle-check" style={{fontSize:20,flexShrink:0}} aria-hidden="true"></i>
+                  <span>All expenses covered this month — no action needed.</span>
+                </div>
+              )
+            }
+
+            // Total needed = max shortfall across all items (they share the same account)
+            // Find the earliest deadline and the amount needed by then
+            const earliest = actionItems[0]
+            const totalNeeded = Math.max(...actionItems.map(i => i.shortfall))
+
+            return (
+              <div className="exp-card" style={{borderColor:'#D85A30',marginBottom:'1rem'}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+                  <i className="ti ti-alert-circle" style={{fontSize:22,color:'#D85A30',flexShrink:0}} aria-hidden="true"></i>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:500,color:'#A32D2D'}}>Action required</div>
+                    <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:2}}>Add funds to the joint account to avoid overdrafts</div>
+                  </div>
+                </div>
+
+                {actionItems.map((item,i) => (
+                  <div key={item.id} style={{
+                    display:'flex',justifyContent:'space-between',alignItems:'center',
+                    padding:'10px 12px',borderRadius:'var(--border-radius-md)',
+                    background: i===0?'#FCEBEB':'var(--color-background-secondary)',
+                    marginBottom: i<actionItems.length-1?8:0
+                  }}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:500,color: i===0?'#A32D2D':'var(--color-text-primary)'}}>
+                        {i===0 && <span style={{fontSize:11,background:'#D85A30',color:'white',borderRadius:99,padding:'1px 7px',marginRight:6}}>URGENT</span>}
+                        Add {fmt(item.shortfall)} by {item.dueStr}
+                      </div>
+                      <div style={{fontSize:12,color:'var(--color-text-secondary)',marginTop:2}}>
+                        {item.name} · {item.daysUntilDue}d away · short by {fmt(item.shortfall)}
+                      </div>
+                    </div>
+                    <div style={{fontSize:13,fontWeight:500,color:'#D85A30',flexShrink:0,marginLeft:12}}>
+                      {fmt(item.shortfall)}
+                    </div>
+                  </div>
+                ))}
+
+                <div style={{marginTop:12,padding:'10px 12px',background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:13,color:'var(--color-text-secondary)'}}>Add to joint account now to cover all shortfalls</span>
+                  <span style={{fontSize:15,fontWeight:500,color:'#D85A30'}}>{fmt(totalNeeded)}</span>
+                </div>
+              </div>
+            )
+          })()}
 
           <div className="metric-grid">
             <div className="metric"><div className="metric-label">Joint account now</div><div className="metric-value">{fmt(joint)}</div></div>
