@@ -585,13 +585,11 @@ export default function App() {
               })
             ].sort((a,b) => a.due - b.due)
 
-            // For each bill, calculate shortfall independently:
-            // joint + deposits before due - all other bills before due - this bill's amount
+            // Each bill checked independently:
+            // joint + deposits landing before due date - just this bill = surplus/shortfall
             const actionItems = []
             allBillItems.forEach(bill => {
-              const cardId = bill.id.startsWith('card_') ? bill.id.replace('card_','') : null
-              const otherBills = billsDueBeforeDate(bill.due, cardId)
-              const projAtDue = joint + depositsBeforeDue(deposits, bill.due) - otherBills
+              const projAtDue = joint + depositsBeforeDue(deposits, bill.due)
               const surplus = projAtDue - bill.amount
               if (surplus < 0) {
                 actionItems.push({
