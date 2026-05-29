@@ -1,5 +1,5 @@
-module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', 'https://family-dashboard-rho-nine.vercel.app')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -27,20 +27,14 @@ module.exports = async function handler(req, res) {
       { headers: { Authorization: `Bearer ${access_token}` } }
     )
     const evData = await evRes.json()
-    if (evData.items) {
-      evData.items.forEach(ev => {
-        allEvents.push({
-          id: ev.id,
-          title: ev.summary || '(No title)',
-          start: ev.start?.dateTime || ev.start?.date,
-          end: ev.end?.dateTime || ev.end?.date,
-          allDay: !ev.start?.dateTime,
-          calendar: cal.summary,
-          color: cal.backgroundColor || '#4285f4',
-          location: ev.location || null,
-        })
-      })
-    }
+    if (evData.items) evData.items.forEach(ev => allEvents.push({
+      id: ev.id, title: ev.summary || '(No title)',
+      start: ev.start?.dateTime || ev.start?.date,
+      end: ev.end?.dateTime || ev.end?.date,
+      allDay: !ev.start?.dateTime,
+      calendar: cal.summary, color: cal.backgroundColor || '#4285f4',
+      location: ev.location || null,
+    }))
   }))
 
   allEvents.sort((a, b) => new Date(a.start) - new Date(b.start))
