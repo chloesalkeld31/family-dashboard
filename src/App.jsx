@@ -438,6 +438,8 @@ export default function App() {
     await supabase.from('birthdays').delete().eq('id', bd.id)
     await loadAll(false)
   }
+
+  async function addShoppingItem() {
     const text = editVals.new_shop_item?.trim()
     if (!text) return
     await supabase.from('shopping_lists').insert({ list: activeShoppingList, item: text, checked: false })
