@@ -1,7 +1,7 @@
 // Vercel serverless function — handles Google OAuth token exchange
 export default async function handler(req, res) {
   // Allow CORS from your app
-  res.setHeader('Access-Control-Allow-Origin', 'https://family-dashboard-rho-nine.vercel.app')
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -10,12 +10,12 @@ export default async function handler(req, res) {
   const { code, action } = req.body
 
   if (action === 'exchange') {
-    // Exchange auth code for tokens
+    const redirect_uri = req.headers.origin || 'https://family-dashboard-rho-nine.vercel.app'
     const params = new URLSearchParams({
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: 'https://family-dashboard-rho-nine.vercel.app',
+      redirect_uri,
       grant_type: 'authorization_code',
     })
     const response = await fetch('https://oauth2.googleapis.com/token', {
