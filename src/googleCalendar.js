@@ -13,7 +13,10 @@ export function getAuthUrl() {
     access_type: 'offline',
     prompt: 'consent',
   })
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
+  console.log('Google Auth URL:', url)
+  console.log('Client ID being used:', CLIENT_ID)
+  return url
 }
 
 export async function exchangeCode(code) {
