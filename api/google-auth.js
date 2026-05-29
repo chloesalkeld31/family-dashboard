@@ -10,6 +10,10 @@ export default async function handler(req, res) {
   const { code, action } = req.body
 
   if (action === 'exchange') {
+    // Debug — log what we're sending (remove after fix)
+    console.log('Client ID present:', !!process.env.GOOGLE_CLIENT_ID)
+    console.log('Client Secret present:', !!process.env.GOOGLE_CLIENT_SECRET)
+    console.log('Code present:', !!code)
     const params = new URLSearchParams({
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
