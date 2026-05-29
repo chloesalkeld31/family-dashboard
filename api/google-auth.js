@@ -5,17 +5,18 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const clientId = process.env.GOOGLE_CLIENT_ID
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+  const { code, action, refresh_token, client_id, client_secret } = req.body
 
-  console.log('ENV CHECK - Client ID:', clientId ? clientId.substring(0, 20) + '...' : 'MISSING')
-  console.log('ENV CHECK - Secret:', clientSecret ? 'present' : 'MISSING')
+  // Use passed credentials, fall back to env vars
+  const clientId = client_id || process.env.GOOGLE_CLIENT_ID
+  const clientSecret = client_secret || process.env.GOOGLE_CLIENT_SECRET
+
+  console.log('Client ID present:', !!clientId)
+  console.log('Client Secret present:', !!clientSecret)
 
   if (!clientId || !clientSecret) {
     return res.status(500).json({ error: 'Server configuration error', detail: `Client ID: ${!!clientId}, Secret: ${!!clientSecret}` })
   }
-
-  const { code, action, refresh_token } = req.body
 
   if (action === 'exchange') {
     const params = new URLSearchParams({
