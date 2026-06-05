@@ -172,6 +172,7 @@ export default function App() {
   const [contributions, setContributions] = useState([])
   const [contribAmount, setContribAmount] = useState('')
   const [contribPerson, setContribPerson] = useState('Chloe')
+  const [completionPicker, setCompletionPicker] = useState(null) // todo waiting for completer
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -677,17 +678,40 @@ export default function App() {
     await loadAll(false)
   }
 
-  async function setTodoStatus(todo, newStatus) {
+  async function setTodoStatus(todo, newStatus, completer = null) {
+    if (newStatus === 'done' && !completer && (!todo.assigned_to || todo.assigned_to === 'Both' || todo.assigned_to === '')) {
+      setCompletionPicker(todo)
+      return
+    }
     const updates = { status: newStatus, updated_at: new Date() }
-    if (newStatus === 'done') updates.archived_at = new Date()
+    if (newStatus === 'done') {
+      // Archive immediately — set archived_at to now
+      updates.archived_at = new Date()
+      if (completer) updates.assigned_to = completer
+    }
     if (newStatus !== 'done') updates.archived_at = null
     await supabase.from('todos').update(updates).eq('id', todo.id)
-    // If this is a birthday card task being marked done, auto-mark card_sent
     if (newStatus === 'done' && todo.text.startsWith('Send birthday card — ')) {
       const bdName = todo.text.replace('Send birthday card — ', '').trim()
       const match = birthdays.find(b => b.name === bdName)
       if (match) await supabase.from('birthdays').update({ card_sent: true, updated_at: new Date() }).eq('id', match.id)
     }
+    setCompletionPicker(null)
+    await loadAll(false)
+  }
+
+  async function saveTodoEdit(todo) {
+    await supabase.from('todos').update({
+      text: editVals[`te_${todo.id}`] ?? todo.text,
+      assigned_to: editVals[`tw_${todo.id}`] ?? todo.assigned_to,
+      due_label: editVals[`td_${todo.id}`] ?? todo.due_label,
+      priority: editVals[`tp_${todo.id}`] ?? todo.priority,
+      category: editVals[`tc_${todo.id}`] ?? todo.category,
+      points: parseInt(editVals[`tpt_${todo.id}`] ?? todo.points ?? 1),
+      recurring: editVals[`tr_${todo.id}`] ?? todo.recurring,
+      updated_at: new Date()
+    }).eq('id', todo.id)
+    setOpenEdit(null)
     await loadAll(false)
   }
 
@@ -1415,7 +1439,25 @@ export default function App() {
       {tab === 'todos' && (
         <div className="section">
 
-          {/* Leaderboard */}
+          {/* Completion picker modal */}
+          {completionPicker && (
+            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'1rem'}}>
+              <div style={{background:'var(--color-background-primary)',borderRadius:'var(--border-radius-lg)',padding:'1.5rem',width:'100%',maxWidth:320,boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+                <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>Who completed this?</div>
+                <div style={{fontSize:13,color:'var(--color-text-secondary)',marginBottom:16}}>{completionPicker.text}</div>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {['Chloe','Chase','Both'].map(person => (
+                    <button key={person} onClick={()=>setTodoStatus(completionPicker,'done',person)}
+                      style={{padding:'12px',borderRadius:'var(--border-radius-md)',border:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-secondary)',cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:500,color:'var(--color-text-primary)',textAlign:'left'}}>
+                      {person}
+                      {person !== 'Both' && <span style={{fontSize:11,color:'var(--color-text-secondary)',fontWeight:400,marginLeft:8}}>+{completionPicker.points||1} pt</span>}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={()=>setCompletionPicker(null)} style={{marginTop:12,width:'100%',padding:'8px',borderRadius:'var(--border-radius-md)',border:'none',background:'none',cursor:'pointer',fontSize:13,color:'var(--color-text-secondary)',fontFamily:'inherit'}}>Cancel</button>
+              </div>
+            </div>
+          )}
           {(() => {
             const now = new Date()
             const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -1426,6 +1468,16 @@ export default function App() {
             const chasePoints = monthDone.filter(t => t.assigned_to === 'Chase').reduce((s,t) => s + (t.points||1), 0)
             const total = chloePoints + chasePoints
             const chloePct = total > 0 ? Math.round((chloePoints/total)*100) : 50
+
+            // Category breakdown
+            const categories = {}
+            monthDone.forEach(t => {
+              const cat = t.category || 'General'
+              if (!categories[cat]) categories[cat] = { Chloe: 0, Chase: 0 }
+              if (t.assigned_to === 'Chloe') categories[cat].Chloe += (t.points||1)
+              if (t.assigned_to === 'Chase') categories[cat].Chase += (t.points||1)
+            })
+            const catEntries = Object.entries(categories).sort((a,b) => (b[1].Chloe+b[1].Chase) - (a[1].Chloe+a[1].Chase))
             return (
               <div className="card" style={{marginBottom:'0.75rem'}}>
                 <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:10}}>
@@ -1452,6 +1504,22 @@ export default function App() {
                   </div>
                 )}
                 {total === 0 && <div style={{fontSize:12,color:'var(--color-text-secondary)',textAlign:'center'}}>Complete tasks to earn points!</div>}
+
+                {/* Category breakdown */}
+                {catEntries.length > 0 && (
+                  <div style={{marginTop:12,borderTop:'0.5px solid var(--color-border-tertiary)',paddingTop:10}}>
+                    <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>By category</div>
+                    {catEntries.map(([cat, pts]) => (
+                      <div key={cat} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                        <span style={{fontSize:12,color:'var(--color-text-primary)',fontWeight:500}}>{cat}</span>
+                        <div style={{display:'flex',gap:12}}>
+                          {pts.Chloe > 0 && <span style={{fontSize:11,color:'#1D9E75'}}>Chloe {pts.Chloe}pt</span>}
+                          {pts.Chase > 0 && <span style={{fontSize:11,color:'#185FA5'}}>Chase {pts.Chase}pt</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )
           })()}
@@ -1539,16 +1607,8 @@ export default function App() {
             {(() => {
               const now = new Date()
               const nonRecurring = todos.filter(t => !t.recurring || t.recurring === 'none')
-              const activeTodos = nonRecurring.filter(t => {
-                if (t.status !== 'done') return true
-                if (!t.archived_at) return true
-                return (now - new Date(t.archived_at)) < 24 * 60 * 60 * 1000
-              })
-              const archivedTodos = nonRecurring.filter(t => {
-                if (t.status !== 'done') return false
-                if (!t.archived_at) return false
-                return (now - new Date(t.archived_at)) >= 24 * 60 * 60 * 1000
-              })
+              const activeTodos = nonRecurring.filter(t => t.status !== 'done')
+              const archivedTodos = nonRecurring.filter(t => t.status === 'done')
 
               // Sort: high priority first, then medium, then low; within each by status
               const priorityOrder = { high: 0, medium: 1, low: 2 }
@@ -1586,33 +1646,82 @@ export default function App() {
                         <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',padding:'6px 0 4px',borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:4}}>{cat}</div>
                       )}
                       {tasks.map(t => (
-                        <div key={t.id} className="todo-item" style={{alignItems:'flex-start',paddingTop:10,paddingBottom:10}}>
-                          {/* Priority indicator */}
-                          <div style={{width:3,alignSelf:'stretch',borderRadius:99,background:priorityColors[t.priority||'medium'],flexShrink:0,marginRight:4}}></div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div className={`todo-text ${t.status==='done'?'done-text':''}`} style={{marginBottom:3}}>{t.text}</div>
-                            <div style={{display:'flex',gap:4,flexWrap:'wrap',alignItems:'center'}}>
-                              {t.assigned_to && <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.assigned_to}</span>}
-                              {t.due_label && <span style={{fontSize:10,color:'var(--color-text-secondary)'}}>{t.due_label}</span>}
-                              <span style={{fontSize:10,color:priorityColors[t.priority||'medium'],background:priorityBg[t.priority||'medium'],borderRadius:99,padding:'1px 6px',textTransform:'capitalize'}}>{t.priority||'medium'}</span>
-                              <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
+                        <div key={t.id} style={{borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                          <div className="todo-item" style={{alignItems:'flex-start',paddingTop:10,paddingBottom:10}}>
+                            <div style={{width:3,alignSelf:'stretch',borderRadius:99,background:priorityColors[t.priority||'medium'],flexShrink:0,marginRight:4}}></div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div className={`todo-text ${t.status==='done'?'done-text':''}`} style={{marginBottom:3}}>{t.text}</div>
+                              <div style={{display:'flex',gap:4,flexWrap:'wrap',alignItems:'center'}}>
+                                {t.assigned_to && <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.assigned_to}</span>}
+                                {t.due_label && <span style={{fontSize:10,color:'var(--color-text-secondary)'}}>{t.due_label}</span>}
+                                <span style={{fontSize:10,color:priorityColors[t.priority||'medium'],background:priorityBg[t.priority||'medium'],borderRadius:99,padding:'1px 6px',textTransform:'capitalize'}}>{t.priority||'medium'}</span>
+                                <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
+                                {t.category && <span style={{fontSize:10,color:'#185FA5',background:'#EEF4FC',borderRadius:99,padding:'1px 6px'}}>{t.category}</span>}
+                              </div>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:4,flexShrink:0,marginTop:2}}>
+                              <select
+                                value={t.status}
+                                onChange={e=>setTodoStatus(t, e.target.value)}
+                                style={{fontSize:11,padding:'3px 6px',borderRadius:'99px',fontWeight:500,cursor:'pointer',
+                                  background: t.status==='todo'?'#F1EFE8':t.status==='inprogress'?'#FAEEDA':t.status==='done'?'#EAF3DE':'#FCEBEB',
+                                  color: t.status==='todo'?'#5F5E5A':t.status==='inprogress'?'#854F0B':t.status==='done'?'#3B6D11':'#A32D2D',
+                                  border:'none'}}
+                              >
+                                {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                              </select>
+                              <button onClick={()=>{ setEditVals(v=>({...v, [`te_${t.id}`]:t.text, [`tw_${t.id}`]:t.assigned_to||'', [`td_${t.id}`]:t.due_label||'', [`tp_${t.id}`]:t.priority||'medium', [`tc_${t.id}`]:t.category||'', [`tpt_${t.id}`]:String(t.points||1), [`tr_${t.id}`]:t.recurring||'none']})); toggleEdit(`todo_${t.id}`) }}
+                                style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.5}}>
+                                <i className="ti ti-edit" aria-hidden="true"></i>
+                              </button>
+                              <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.4}}>
+                                <i className="ti ti-x" aria-hidden="true"></i>
+                              </button>
                             </div>
                           </div>
-                          <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0,marginTop:2}}>
-                            <select
-                              value={t.status}
-                              onChange={e=>setTodoStatus(t, e.target.value)}
-                              style={{fontSize:11,padding:'3px 6px',borderRadius:'99px',fontWeight:500,cursor:'pointer',
-                                background: t.status==='todo'?'#F1EFE8':t.status==='inprogress'?'#FAEEDA':t.status==='done'?'#EAF3DE':'#FCEBEB',
-                                color: t.status==='todo'?'#5F5E5A':t.status==='inprogress'?'#854F0B':t.status==='done'?'#3B6D11':'#A32D2D',
-                                border:'none'}}
-                            >
-                              {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                            </select>
-                            <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.4}}>
-                              <i className="ti ti-x" aria-hidden="true"></i>
-                            </button>
-                          </div>
+                          {openEdit===`todo_${t.id}` && (
+                            <div className="inline-edit open" style={{marginBottom:8}}>
+                              <div className="edit-row"><label>Task</label><input type="text" value={editVals[`te_${t.id}`]||''} onChange={ev(`te_${t.id}`)} /></div>
+                              <div className="edit-row">
+                                <label>Who</label>
+                                <select value={editVals[`tw_${t.id}`]||''} onChange={ev(`tw_${t.id}`)}>
+                                  <option value="">Anyone</option>
+                                  <option value="Chloe">Chloe</option>
+                                  <option value="Chase">Chase</option>
+                                  <option value="Both">Both</option>
+                                </select>
+                              </div>
+                              <div className="edit-row">
+                                <label>Priority</label>
+                                <select value={editVals[`tp_${t.id}`]||'medium'} onChange={ev(`tp_${t.id}`)}>
+                                  <option value="high">High</option>
+                                  <option value="medium">Medium</option>
+                                  <option value="low">Low</option>
+                                </select>
+                              </div>
+                              <div className="edit-row"><label>Category</label><input type="text" value={editVals[`tc_${t.id}`]||''} onChange={ev(`tc_${t.id}`)} placeholder="e.g. Home, Finance" /></div>
+                              <div className="edit-row">
+                                <label>Points</label>
+                                <select value={editVals[`tpt_${t.id}`]||'1'} onChange={ev(`tpt_${t.id}`)}>
+                                  <option value="1">1pt — Easy</option>
+                                  <option value="2">2pt — Medium</option>
+                                  <option value="3">3pt — Hard</option>
+                                  <option value="5">5pt — Very hard</option>
+                                </select>
+                              </div>
+                              <div className="edit-row"><label>Due</label><input type="text" value={editVals[`td_${t.id}`]||''} onChange={ev(`td_${t.id}`)} placeholder="e.g. Jun 3" /></div>
+                              <div className="edit-row">
+                                <label>Recurring</label>
+                                <select value={editVals[`tr_${t.id}`]||'none'} onChange={ev(`tr_${t.id}`)}>
+                                  <option value="none">One-time</option>
+                                  <option value="daily">Daily</option>
+                                  <option value="weekly">Weekly</option>
+                                  <option value="monthly">Monthly</option>
+                                </select>
+                              </div>
+                              <button className="save-btn" onClick={()=>saveTodoEdit(t)}>Save</button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
