@@ -1670,7 +1670,7 @@ export default function App() {
                               >
                                 {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                               </select>
-                              <button onClick={()=>{ setEditVals(v=>({...v, [`te_${t.id}`]:t.text, [`tw_${t.id}`]:t.assigned_to||'', [`td_${t.id}`]:t.due_label||'', [`tp_${t.id}`]:t.priority||'medium', [`tc_${t.id}`]:t.category||'', [`tpt_${t.id}`]:String(t.points||1), [`tr_${t.id}`]:t.recurring||'none']})); toggleEdit(`todo_${t.id}`) }}
+                              <button onClick={()=>{ const id=t.id; setEditVals(v=>({...v, ['te_'+id]:t.text, ['tw_'+id]:t.assigned_to||'', ['td_'+id]:t.due_label||'', ['tp_'+id]:t.priority||'medium', ['tc_'+id]:t.category||'', ['tpt_'+id]:String(t.points||1), ['tr_'+id]:t.recurring||'none'})); toggleEdit('todo_'+id) }}
                                 style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.5}}>
                                 <i className="ti ti-edit" aria-hidden="true"></i>
                               </button>
