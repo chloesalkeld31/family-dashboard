@@ -169,6 +169,9 @@ export default function App() {
   const [plaidLinkToken, setPlaidLinkToken] = useState(null)
   const [showPlaidConnect, setShowPlaidConnect] = useState(false)
   const [plaidAccountPicker, setPlaidAccountPicker] = useState(null) // {institutionName, accounts}
+  const [contributions, setContributions] = useState([])
+  const [contribAmount, setContribAmount] = useState('')
+  const [contribPerson, setContribPerson] = useState('Chloe')
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -205,7 +208,7 @@ export default function App() {
     const { data: { session: currentSession } } = await supabase.auth.getSession()
     if (!currentSession) return
     if (showSpinner) setLoading(true)
-    const [ja, dep, cc, fx, vx, td, sl, bd, pa] = await Promise.all([
+    const [ja, dep, cc, fx, vx, td, sl, bd, pa, co] = await Promise.all([
       supabase.from('joint_account').select('*').limit(1),
       supabase.from('deposits').select('*').order('deposit_number'),
       supabase.from('credit_cards').select('*').order('sort_order'),
@@ -215,6 +218,7 @@ export default function App() {
       supabase.from('shopping_lists').select('*').order('created_at'),
       supabase.from('birthdays').select('*').order('birth_date'),
       supabase.from('plaid_accounts').select('*').order('created_at'),
+      supabase.from('contributions').select('*').order('created_at'),
     ])
     if (ja.data && ja.data.length > 0) { setJoint(parseFloat(ja.data[0].balance)) }
     if (dep.data) setDeposits(dep.data.map(d => ({...d, amount: parseFloat(d.amount)})))
@@ -225,11 +229,11 @@ export default function App() {
     if (sl.data) setShoppingList(sl.data)
     if (pa.data) {
       setPlaidAccounts(pa.data)
-      // Auto-sync Plaid balances if we have connected accounts
       if (pa.data.length > 0) {
         syncPlaidBalances(pa.data, ja.data, cc.data)
       }
     }
+    if (co.data) setContributions(co.data)
     if (bd.data) {
       setBirthdays(bd.data)
       // Auto-create "send card" todos for birthdays within 30 days
@@ -446,6 +450,24 @@ export default function App() {
 
   async function disconnectPlaidAccount(account) {
     await supabase.from('plaid_accounts').delete().eq('id', account.id)
+    await loadAll(false)
+  }
+
+  async function addContribution() {
+    const amount = parseFloat(contribAmount)
+    if (!amount || amount <= 0) return
+    await supabase.from('contributions').insert({ person: contribPerson, amount })
+    setContribAmount('')
+    await loadAll(false)
+  }
+
+  async function deleteContribution(id) {
+    await supabase.from('contributions').delete().eq('id', id)
+    await loadAll(false)
+  }
+
+  async function resetContributions() {
+    await supabase.from('contributions').delete().neq('id', '00000000-0000-0000-0000-000000000000')
     await loadAll(false)
   }
 
@@ -914,6 +936,93 @@ export default function App() {
               </div>
             </div>
           ))}
+
+          {/* Contribution tracker */}
+          {(() => {
+            const chloeTotal = contributions.reduce((s,c) => c.person==='Chloe' ? s+parseFloat(c.amount) : s, 0)
+            const chrisTotal = contributions.reduce((s,c) => c.person==='Chris' ? s+parseFloat(c.amount) : s, 0)
+            const diff = chloeTotal - chrisTotal
+            const isEven = Math.abs(diff) < 0.01
+            const aheadPerson = diff > 0 ? 'Chloe' : 'Chris'
+            const behindPerson = diff > 0 ? 'Chris' : 'Chloe'
+
+            return (
+              <div className="card" style={{marginBottom:'0.75rem'}}>
+                <div className="card-header">
+                  <span className="card-title" style={{marginBottom:0}}>Joint account contributions</span>
+                  {contributions.length > 0 && (
+                    <button onClick={resetContributions} style={{fontSize:11,color:'var(--color-text-secondary)',background:'none',border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',padding:'3px 8px',cursor:'pointer',fontFamily:'inherit'}}>
+                      Reset
+                    </button>
+                  )}
+                </div>
+
+                {/* Balance summary */}
+                {contributions.length > 0 && (
+                  <div style={{display:'flex',gap:8,marginBottom:12}}>
+                    {[['Chloe', chloeTotal], ['Chris', chrisTotal]].map(([name, total]) => (
+                      <div key={name} style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
+                        <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:4}}>{name}</div>
+                        <div style={{fontSize:18,fontWeight:500,color:'var(--color-text-primary)'}}>{fmt(total)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Status */}
+                {contributions.length > 0 && (
+                  <div className={`coverage-row ${isEven ? 'cov-good' : 'cov-bad'}`} style={{marginBottom:12}}>
+                    {isEven
+                      ? '✓ You\'re even!'
+                      : `${aheadPerson} is up ${fmt(Math.abs(diff))} — ${behindPerson} owes next transfer`}
+                  </div>
+                )}
+
+                {/* Add contribution */}
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <select value={contribPerson} onChange={e=>setContribPerson(e.target.value)}
+                    style={{flex:'0 0 auto',padding:'8px 10px',borderRadius:'var(--border-radius-md)',border:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-primary)',fontFamily:'inherit',fontSize:13}}>
+                    <option>Chloe</option>
+                    <option>Chris</option>
+                  </select>
+                  <input type="number" min="0" step="0.01" placeholder="Amount ($)"
+                    value={contribAmount} onChange={e=>setContribAmount(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&addContribution()}
+                    style={{flex:1}} />
+                  <button className="save-btn" onClick={addContribution}
+                    style={{width:'auto',padding:'6px 14px',flexShrink:0}}>Add</button>
+                </div>
+
+                {/* History */}
+                {contributions.length > 0 && (
+                  <div style={{marginTop:12}}>
+                    <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:6}}>History</div>
+                    {[...contributions].reverse().map(c => (
+                      <div key={c.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:13,fontWeight:500,color:'var(--color-text-primary)'}}>{c.person}</span>
+                          <span style={{fontSize:11,color:'var(--color-text-secondary)'}}>
+                            {new Date(c.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+                          </span>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:13,fontWeight:500,color:'#1D9E75'}}>+{fmt(parseFloat(c.amount))}</span>
+                          <button onClick={()=>deleteContribution(c.id)}
+                            style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.4}}>
+                            <i className="ti ti-x" aria-hidden="true"></i>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {contributions.length === 0 && (
+                  <div className="empty-state" style={{marginTop:8}}>No contributions logged yet — add the first one above</div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Action items — what needs to be added and by when */}
           {(() => {
