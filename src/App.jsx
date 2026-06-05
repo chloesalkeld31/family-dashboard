@@ -940,11 +940,11 @@ export default function App() {
           {/* Contribution tracker */}
           {(() => {
             const chloeTotal = contributions.reduce((s,c) => c.person==='Chloe' ? s+parseFloat(c.amount) : s, 0)
-            const chrisTotal = contributions.reduce((s,c) => c.person==='Chris' ? s+parseFloat(c.amount) : s, 0)
-            const diff = chloeTotal - chrisTotal
+            const chaseTotal = contributions.reduce((s,c) => c.person==='Chase' ? s+parseFloat(c.amount) : s, 0)
+            const diff = chloeTotal - chaseTotal
             const isEven = Math.abs(diff) < 0.01
-            const aheadPerson = diff > 0 ? 'Chloe' : 'Chris'
-            const behindPerson = diff > 0 ? 'Chris' : 'Chloe'
+            const aheadPerson = diff > 0 ? 'Chloe' : 'Chase'
+            const behindPerson = diff > 0 ? 'Chase' : 'Chloe'
 
             return (
               <div className="card" style={{marginBottom:'0.75rem'}}>
@@ -960,7 +960,7 @@ export default function App() {
                 {/* Balance summary */}
                 {contributions.length > 0 && (
                   <div style={{display:'flex',gap:8,marginBottom:12}}>
-                    {[['Chloe', chloeTotal], ['Chris', chrisTotal]].map(([name, total]) => (
+                    {[['Chloe', chloeTotal], ['Chase', chaseTotal]].map(([name, total]) => (
                       <div key={name} style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
                         <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:4}}>{name}</div>
                         <div style={{fontSize:18,fontWeight:500,color:'var(--color-text-primary)'}}>{fmt(total)}</div>
@@ -979,18 +979,18 @@ export default function App() {
                 )}
 
                 {/* Add contribution */}
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'nowrap'}}>
                   <select value={contribPerson} onChange={e=>setContribPerson(e.target.value)}
-                    style={{flex:'0 0 auto',padding:'8px 10px',borderRadius:'var(--border-radius-md)',border:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-primary)',fontFamily:'inherit',fontSize:13}}>
+                    style={{flexShrink:0,width:80,padding:'8px 6px',borderRadius:'var(--border-radius-md)',border:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-primary)',fontFamily:'inherit',fontSize:13}}>
                     <option>Chloe</option>
-                    <option>Chris</option>
+                    <option>Chase</option>
                   </select>
-                  <input type="number" min="0" step="0.01" placeholder="Amount ($)"
+                  <input type="number" min="0" step="0.01" placeholder="Amount"
                     value={contribAmount} onChange={e=>setContribAmount(e.target.value)}
                     onKeyDown={e=>e.key==='Enter'&&addContribution()}
-                    style={{flex:1}} />
+                    style={{flex:1,minWidth:0}} />
                   <button className="save-btn" onClick={addContribution}
-                    style={{width:'auto',padding:'6px 14px',flexShrink:0}}>Add</button>
+                    style={{flexShrink:0,width:'auto',padding:'8px 12px'}}>Add</button>
                 </div>
 
                 {/* History */}
