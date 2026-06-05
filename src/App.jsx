@@ -662,8 +662,17 @@ export default function App() {
   async function addTodo() {
     const text = editVals.new_todo?.trim()
     if (!text) return
-    await supabase.from('todos').insert({ text, status: 'todo', assigned_to: editVals.new_who||'', due_label: editVals.new_due||'' })
-    setEditVals(v => ({...v, new_todo:'', new_who:'', new_due:''}))
+    await supabase.from('todos').insert({
+      text,
+      status: 'todo',
+      assigned_to: editVals.new_who || '',
+      due_label: editVals.new_due || '',
+      priority: editVals.new_priority || 'medium',
+      category: editVals.new_category || '',
+      points: parseInt(editVals.new_points || '1'),
+      recurring: editVals.new_recurring || 'none',
+    })
+    setEditVals(v => ({...v, new_todo:'', new_who:'', new_due:'', new_priority:'medium', new_category:'', new_points:'1', new_recurring:'none'}))
     setOpenEdit(null)
     await loadAll(false)
   }
@@ -1405,105 +1414,248 @@ export default function App() {
       {/* ── TO-DO ── */}
       {tab === 'todos' && (
         <div className="section">
+
+          {/* Leaderboard */}
+          {(() => {
+            const now = new Date()
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+            const monthDone = todos.filter(t =>
+              t.status === 'done' && t.archived_at && new Date(t.archived_at) >= monthStart
+            )
+            const chloePoints = monthDone.filter(t => t.assigned_to === 'Chloe').reduce((s,t) => s + (t.points||1), 0)
+            const chasePoints = monthDone.filter(t => t.assigned_to === 'Chase').reduce((s,t) => s + (t.points||1), 0)
+            const total = chloePoints + chasePoints
+            const chloePct = total > 0 ? Math.round((chloePoints/total)*100) : 50
+            return (
+              <div className="card" style={{marginBottom:'0.75rem'}}>
+                <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:10}}>
+                  {now.toLocaleDateString('en-US',{month:'long'})} leaderboard
+                </div>
+                <div style={{display:'flex',gap:8,marginBottom:10}}>
+                  {[['Chloe', chloePoints, '#1D9E75'], ['Chase', chasePoints, '#185FA5']].map(([name, pts, color]) => (
+                    <div key={name} style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
+                      <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:2}}>{name}</div>
+                      <div style={{fontSize:22,fontWeight:500,color}}>{pts}</div>
+                      <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>pts this month</div>
+                    </div>
+                  ))}
+                </div>
+                {total > 0 && (
+                  <div style={{height:6,borderRadius:99,background:'var(--color-background-secondary)',overflow:'hidden',display:'flex'}}>
+                    <div style={{width:`${chloePct}%`,background:'#1D9E75',transition:'width 0.3s'}}></div>
+                    <div style={{flex:1,background:'#185FA5'}}></div>
+                  </div>
+                )}
+                {total > 0 && (
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--color-text-secondary)',marginTop:4}}>
+                    <span>Chloe {chloePct}%</span><span>Chase {100-chloePct}%</span>
+                  </div>
+                )}
+                {total === 0 && <div style={{fontSize:12,color:'var(--color-text-secondary)',textAlign:'center'}}>Complete tasks to earn points!</div>}
+              </div>
+            )
+          })()}
+
+          {/* Recurring tasks */}
+          {(() => {
+            const recurringTasks = todos.filter(t => t.recurring && t.recurring !== 'none')
+            if (!recurringTasks.length) return null
+            return (
+              <div className="card" style={{marginBottom:'0.75rem'}}>
+                <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>Recurring</div>
+                {['daily','weekly','monthly'].map(freq => {
+                  const tasks = recurringTasks.filter(t => t.recurring === freq)
+                  if (!tasks.length) return null
+                  return (
+                    <div key={freq} style={{marginBottom:8}}>
+                      <div style={{fontSize:11,color:'var(--color-text-secondary)',textTransform:'capitalize',marginBottom:4,fontWeight:500}}>{freq}</div>
+                      {tasks.map(t => (
+                        <div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                          <button onClick={()=>setTodoStatus(t, t.status==='done'?'todo':'done')}
+                            style={{background:'none',border:'none',cursor:'pointer',padding:0,flexShrink:0,color:t.status==='done'?'#1D9E75':'var(--color-text-secondary)',fontSize:18}}>
+                            <i className={`ti ${t.status==='done'?'ti-circle-check':'ti-circle'}`} aria-hidden="true"></i>
+                          </button>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:13,color:t.status==='done'?'var(--color-text-secondary)':'var(--color-text-primary)',textDecoration:t.status==='done'?'line-through':'none'}}>{t.text}</div>
+                            {t.assigned_to && <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>{t.assigned_to}</div>}
+                          </div>
+                          <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+
+          {/* Main task board */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">All tasks</span>
+              <span className="card-title">Tasks</span>
               <button className="add-btn" onClick={()=>toggleEdit('new_todo')}><i className="ti ti-plus" aria-hidden="true"></i> Add</button>
             </div>
+
             {openEdit==='new_todo' && (
               <div className="add-form open">
-                <div className="form-row"><input type="text" placeholder="Task description" value={editVals.new_todo||''} onChange={ev('new_todo')} /></div>
+                <div className="form-row">
+                  <input type="text" placeholder="Task description" value={editVals.new_todo||''} onChange={ev('new_todo')} />
+                </div>
                 <div className="form-row">
                   <select value={editVals.new_who||''} onChange={ev('new_who')}>
-                    <option value="">Anyone</option><option value="You">You</option><option value="Partner">Partner</option><option value="Both">Both</option>
+                    <option value="">Anyone</option>
+                    <option value="Chloe">Chloe</option>
+                    <option value="Chase">Chase</option>
+                    <option value="Both">Both</option>
                   </select>
+                  <select value={editVals.new_priority||'medium'} onChange={ev('new_priority')}>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <input type="text" placeholder="Category (e.g. Home, Finance)" value={editVals.new_category||''} onChange={ev('new_category')} />
+                  <select value={editVals.new_points||'1'} onChange={ev('new_points')}>
+                    <option value="1">1pt — Easy</option>
+                    <option value="2">2pt — Medium</option>
+                    <option value="3">3pt — Hard</option>
+                    <option value="5">5pt — Very hard</option>
+                  </select>
+                </div>
+                <div className="form-row">
                   <input type="text" placeholder="Due (e.g. Jun 3)" value={editVals.new_due||''} onChange={ev('new_due')} />
+                  <select value={editVals.new_recurring||'none'} onChange={ev('new_recurring')}>
+                    <option value="none">One-time</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
                 </div>
                 <button className="save-btn" onClick={addTodo}>Add task</button>
               </div>
             )}
+
             {(() => {
               const now = new Date()
-              const activeTodos = todos.filter(t => {
+              const nonRecurring = todos.filter(t => !t.recurring || t.recurring === 'none')
+              const activeTodos = nonRecurring.filter(t => {
                 if (t.status !== 'done') return true
                 if (!t.archived_at) return true
-                // Keep in active if done less than 24h ago
                 return (now - new Date(t.archived_at)) < 24 * 60 * 60 * 1000
               })
-              const archivedTodos = todos.filter(t => {
+              const archivedTodos = nonRecurring.filter(t => {
                 if (t.status !== 'done') return false
                 if (!t.archived_at) return false
                 return (now - new Date(t.archived_at)) >= 24 * 60 * 60 * 1000
               })
 
-              // Group archived by week
-              const archivedByWeek = archivedTodos.reduce((groups, t) => {
-                const d = new Date(t.archived_at)
-                const weekStart = new Date(d)
-                weekStart.setDate(d.getDate() - d.getDay())
-                weekStart.setHours(0,0,0,0)
-                const key = weekStart.toISOString()
-                const label = `Week of ${weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
-                if (!groups[key]) groups[key] = { label, items: [] }
-                groups[key].items.push(t)
-                return groups
-              }, {})
+              // Sort: high priority first, then medium, then low; within each by status
+              const priorityOrder = { high: 0, medium: 1, low: 2 }
+              const sortedActive = [...activeTodos].sort((a,b) => {
+                const pa = priorityOrder[a.priority||'medium'] ?? 1
+                const pb = priorityOrder[b.priority||'medium'] ?? 1
+                return pa - pb
+              })
+
+              // Group by category
+              const categories = {}
+              sortedActive.forEach(t => {
+                const cat = t.category || 'Uncategorized'
+                if (!categories[cat]) categories[cat] = []
+                categories[cat].push(t)
+              })
+
+              const priorityColors = { high: '#D85A30', medium: '#BA7517', low: '#185FA5' }
+              const priorityBg = { high: '#FCEBEB', medium: '#FAEEDA', low: '#EEF4FC' }
 
               const statusOptions = [
-                { value: 'todo', label: 'To do', cls: 'badge-todo' },
-                { value: 'inprogress', label: 'In progress', cls: 'badge-inprogress' },
-                { value: 'done', label: 'Done', cls: 'badge-done' },
-                { value: 'blocked', label: 'Blocked', cls: 'badge-blocked' },
+                { value: 'todo', label: 'To do' },
+                { value: 'inprogress', label: 'In progress' },
+                { value: 'done', label: 'Done' },
+                { value: 'blocked', label: 'Blocked' },
               ]
 
               return (
                 <>
-                  {activeTodos.length === 0 && <div className="empty-state">No active tasks</div>}
-                  {activeTodos.map(t => (
-                    <div key={t.id} className="todo-item">
-                      <div style={{flex:1}}>
-                        <div className={`todo-text ${t.status==='done'?'done-text':''}`}>{t.text}</div>
-                        <div className="todo-meta">{[t.assigned_to, t.due_label].filter(Boolean).join(' · ')}</div>
-                      </div>
-                      <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                        <select
-                          value={t.status}
-                          onChange={e=>setTodoStatus(t, e.target.value)}
-                          style={{fontSize:11,padding:'3px 6px',borderRadius:'99px',fontWeight:500,cursor:'pointer',width:'auto',
-                            background: t.status==='todo'?'#F1EFE8':t.status==='inprogress'?'#FAEEDA':t.status==='done'?'#EAF3DE':'#FCEBEB',
-                            color: t.status==='todo'?'#5F5E5A':t.status==='inprogress'?'#854F0B':t.status==='done'?'#3B6D11':'#A32D2D',
-                            border: 'none'}}
-                        >
-                          {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
-                        <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:14,opacity:0.4}}>
-                          <i className="ti ti-x" aria-hidden="true"></i>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                  {activeTodos.length === 0 && <div className="empty-state">No active tasks — add one above</div>}
 
-                  {Object.keys(archivedByWeek).length > 0 && (
-                    <div style={{marginTop:16}}>
-                      <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>Archive</div>
-                      {Object.entries(archivedByWeek).sort((a,b)=>b[0].localeCompare(a[0])).map(([key,week]) => (
-                        <div key={key} style={{marginBottom:12}}>
-                          <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:6}}>{week.label}</div>
-                          {week.items.map(t => (
-                            <div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 0',borderBottom:'0.5px solid var(--color-border-tertiary)',opacity:0.5}}>
-                              <div style={{flex:1}}>
-                                <div style={{fontSize:14,textDecoration:'line-through',color:'var(--color-text-secondary)'}}>{t.text}</div>
-                                <div className="todo-meta">{[t.assigned_to, t.due_label].filter(Boolean).join(' · ')}</div>
-                              </div>
-                              <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:14,opacity:0.4}}>
-                                <i className="ti ti-x" aria-hidden="true"></i>
-                              </button>
+                  {Object.entries(categories).map(([cat, tasks]) => (
+                    <div key={cat} style={{marginBottom:12}}>
+                      {Object.keys(categories).length > 1 && (
+                        <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',padding:'6px 0 4px',borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:4}}>{cat}</div>
+                      )}
+                      {tasks.map(t => (
+                        <div key={t.id} className="todo-item" style={{alignItems:'flex-start',paddingTop:10,paddingBottom:10}}>
+                          {/* Priority indicator */}
+                          <div style={{width:3,alignSelf:'stretch',borderRadius:99,background:priorityColors[t.priority||'medium'],flexShrink:0,marginRight:4}}></div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div className={`todo-text ${t.status==='done'?'done-text':''}`} style={{marginBottom:3}}>{t.text}</div>
+                            <div style={{display:'flex',gap:4,flexWrap:'wrap',alignItems:'center'}}>
+                              {t.assigned_to && <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.assigned_to}</span>}
+                              {t.due_label && <span style={{fontSize:10,color:'var(--color-text-secondary)'}}>{t.due_label}</span>}
+                              <span style={{fontSize:10,color:priorityColors[t.priority||'medium'],background:priorityBg[t.priority||'medium'],borderRadius:99,padding:'1px 6px',textTransform:'capitalize'}}>{t.priority||'medium'}</span>
+                              <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
                             </div>
-                          ))}
+                          </div>
+                          <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0,marginTop:2}}>
+                            <select
+                              value={t.status}
+                              onChange={e=>setTodoStatus(t, e.target.value)}
+                              style={{fontSize:11,padding:'3px 6px',borderRadius:'99px',fontWeight:500,cursor:'pointer',
+                                background: t.status==='todo'?'#F1EFE8':t.status==='inprogress'?'#FAEEDA':t.status==='done'?'#EAF3DE':'#FCEBEB',
+                                color: t.status==='todo'?'#5F5E5A':t.status==='inprogress'?'#854F0B':t.status==='done'?'#3B6D11':'#A32D2D',
+                                border:'none'}}
+                            >
+                              {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                            <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.4}}>
+                              <i className="ti ti-x" aria-hidden="true"></i>
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
-                  )}
+                  ))}
+
+                  {/* Archive */}
+                  {archivedTodos.length > 0 && (() => {
+                    const archivedByWeek = archivedTodos.reduce((groups, t) => {
+                      const d = new Date(t.archived_at)
+                      const weekStart = new Date(d)
+                      weekStart.setDate(d.getDate() - d.getDay())
+                      weekStart.setHours(0,0,0,0)
+                      const key = weekStart.toISOString()
+                      const label = `Week of ${weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
+                      if (!groups[key]) groups[key] = { label, items: [] }
+                      groups[key].items.push(t)
+                      return groups
+                    }, {})
+                    return (
+                      <div style={{marginTop:16}}>
+                        <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>Archive</div>
+                        {Object.entries(archivedByWeek).sort((a,b)=>b[0].localeCompare(a[0])).map(([key,week]) => (
+                          <div key={key} style={{marginBottom:12}}>
+                            <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:6}}>{week.label}</div>
+                            {week.items.map(t => (
+                              <div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 0',borderBottom:'0.5px solid var(--color-border-tertiary)',opacity:0.5}}>
+                                <div style={{flex:1}}>
+                                  <div style={{fontSize:13,textDecoration:'line-through',color:'var(--color-text-secondary)'}}>{t.text}</div>
+                                  <div style={{fontSize:11,color:'var(--color-text-secondary)',display:'flex',gap:4}}>
+                                    {t.assigned_to && <span>{t.assigned_to}</span>}
+                                    <span>{t.points||1}pt</span>
+                                  </div>
+                                </div>
+                                <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.4}}>
+                                  <i className="ti ti-x" aria-hidden="true"></i>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </>
               )
             })()}
