@@ -1538,16 +1538,67 @@ export default function App() {
                     <div key={freq} style={{marginBottom:8}}>
                       <div style={{fontSize:11,color:'var(--color-text-secondary)',textTransform:'capitalize',marginBottom:4,fontWeight:500}}>{freq}</div>
                       {tasks.map(t => (
-                        <div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
-                          <button onClick={()=>setTodoStatus(t, t.status==='done'?'todo':'done')}
-                            style={{background:'none',border:'none',cursor:'pointer',padding:0,flexShrink:0,color:t.status==='done'?'#1D9E75':'var(--color-text-secondary)',fontSize:18}}>
-                            <i className={`ti ${t.status==='done'?'ti-circle-check':'ti-circle'}`} aria-hidden="true"></i>
-                          </button>
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:13,color:t.status==='done'?'var(--color-text-secondary)':'var(--color-text-primary)',textDecoration:t.status==='done'?'line-through':'none'}}>{t.text}</div>
-                            {t.assigned_to && <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>{t.assigned_to}</div>}
+                        <div key={t.id} style={{borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,padding:'6px 0'}}>
+                            <button onClick={()=>setTodoStatus(t, t.status==='done'?'todo':'done')}
+                              style={{background:'none',border:'none',cursor:'pointer',padding:0,flexShrink:0,color:t.status==='done'?'#1D9E75':'var(--color-text-secondary)',fontSize:18}}>
+                              <i className={`ti ${t.status==='done'?'ti-circle-check':'ti-circle'}`} aria-hidden="true"></i>
+                            </button>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:13,color:t.status==='done'?'var(--color-text-secondary)':'var(--color-text-primary)',textDecoration:t.status==='done'?'line-through':'none'}}>{t.text}</div>
+                              {t.assigned_to && <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>{t.assigned_to}</div>}
+                            </div>
+                            <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
+                            <button onClick={()=>{ const id=t.id; setEditVals(v=>({...v, ['te_'+id]:t.text, ['tw_'+id]:t.assigned_to||'', ['td_'+id]:t.due_label||'', ['tp_'+id]:t.priority||'medium', ['tc_'+id]:t.category||'', ['tpt_'+id]:String(t.points||1), ['tr_'+id]:t.recurring||'none'})); toggleEdit('todo_'+id) }}
+                              style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.5}}>
+                              <i className="ti ti-edit" aria-hidden="true"></i>
+                            </button>
+                            <button onClick={()=>deleteTodo(t)} style={{background:'none',border:'none',cursor:'pointer',padding:2,color:'var(--color-text-secondary)',fontSize:13,opacity:0.4}}>
+                              <i className="ti ti-x" aria-hidden="true"></i>
+                            </button>
                           </div>
-                          <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
+                          {openEdit===('todo_'+t.id) && (
+                            <div className="inline-edit open" style={{marginBottom:8}}>
+                              <div className="edit-row"><label>Task</label><input type="text" value={editVals['te_'+t.id]||''} onChange={ev('te_'+t.id)} /></div>
+                              <div className="edit-row">
+                                <label>Who</label>
+                                <select value={editVals['tw_'+t.id]||''} onChange={ev('tw_'+t.id)}>
+                                  <option value="">Anyone</option>
+                                  <option value="Chloe">Chloe</option>
+                                  <option value="Chase">Chase</option>
+                                  <option value="Both">Both</option>
+                                </select>
+                              </div>
+                              <div className="edit-row">
+                                <label>Priority</label>
+                                <select value={editVals['tp_'+t.id]||'medium'} onChange={ev('tp_'+t.id)}>
+                                  <option value="high">High</option>
+                                  <option value="medium">Medium</option>
+                                  <option value="low">Low</option>
+                                </select>
+                              </div>
+                              <div className="edit-row"><label>Category</label><input type="text" value={editVals['tc_'+t.id]||''} onChange={ev('tc_'+t.id)} placeholder="e.g. Home, Finance" /></div>
+                              <div className="edit-row">
+                                <label>Points</label>
+                                <select value={editVals['tpt_'+t.id]||'1'} onChange={ev('tpt_'+t.id)}>
+                                  <option value="1">1pt — Easy</option>
+                                  <option value="2">2pt — Medium</option>
+                                  <option value="3">3pt — Hard</option>
+                                  <option value="5">5pt — Very hard</option>
+                                </select>
+                              </div>
+                              <div className="edit-row">
+                                <label>Recurring</label>
+                                <select value={editVals['tr_'+t.id]||'none'} onChange={ev('tr_'+t.id)}>
+                                  <option value="none">One-time</option>
+                                  <option value="daily">Daily</option>
+                                  <option value="weekly">Weekly</option>
+                                  <option value="monthly">Monthly</option>
+                                </select>
+                              </div>
+                              <button className="save-btn" onClick={()=>saveTodoEdit(t)}>Save</button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
