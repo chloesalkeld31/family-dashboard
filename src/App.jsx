@@ -1484,7 +1484,7 @@ export default function App() {
                   {now.toLocaleDateString('en-US',{month:'long'})} leaderboard
                 </div>
                 <div style={{display:'flex',gap:8,marginBottom:10}}>
-                  {[['Chloe', chloePoints, '#1D9E75'], ['Chase', chasePoints, '#185FA5']].map(([name, pts, color]) => (
+                  {[['Chloe', chloePoints, '#C2185B'], ['Chase', chasePoints, '#1565C0']].map(([name, pts, color]) => (
                     <div key={name} style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
                       <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:2}}>{name}</div>
                       <div style={{fontSize:22,fontWeight:500,color}}>{pts}</div>
@@ -1494,8 +1494,8 @@ export default function App() {
                 </div>
                 {total > 0 && (
                   <div style={{height:6,borderRadius:99,background:'var(--color-background-secondary)',overflow:'hidden',display:'flex'}}>
-                    <div style={{width:`${chloePct}%`,background:'#1D9E75',transition:'width 0.3s'}}></div>
-                    <div style={{flex:1,background:'#185FA5'}}></div>
+                    <div style={{width:`${chloePct}%`,background:'#C2185B',transition:'width 0.3s'}}></div>
+                    <div style={{flex:1,background:'#1565C0'}}></div>
                   </div>
                 )}
                 {total > 0 && (
@@ -1513,8 +1513,8 @@ export default function App() {
                       <div key={cat} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
                         <span style={{fontSize:12,color:'var(--color-text-primary)',fontWeight:500}}>{cat}</span>
                         <div style={{display:'flex',gap:12}}>
-                          {pts.Chloe > 0 && <span style={{fontSize:11,color:'#1D9E75'}}>Chloe {pts.Chloe}pt</span>}
-                          {pts.Chase > 0 && <span style={{fontSize:11,color:'#185FA5'}}>Chase {pts.Chase}pt</span>}
+                          {pts.Chloe > 0 && <span style={{fontSize:11,color:'#C2185B'}}>Chloe {pts.Chloe}pt</span>}
+                          {pts.Chase > 0 && <span style={{fontSize:11,color:'#1565C0'}}>Chase {pts.Chase}pt</span>}
                         </div>
                       </div>
                     ))}
@@ -1679,6 +1679,8 @@ export default function App() {
 
               const priorityColors = { high: '#D85A30', medium: '#BA7517', low: '#185FA5' }
               const priorityBg = { high: '#FCEBEB', medium: '#FAEEDA', low: '#EEF4FC' }
+              const personColor = { Chloe: '#C2185B', Chase: '#1565C0', Both: '#5F5E5A' }
+              const personBg = { Chloe: '#FCE4EC', Chase: '#E3F2FD', Both: '#F1EFE8' }
 
               const statusOptions = [
                 { value: 'todo', label: 'To do' },
@@ -1703,7 +1705,7 @@ export default function App() {
                             <div style={{flex:1,minWidth:0}}>
                               <div className={`todo-text ${t.status==='done'?'done-text':''}`} style={{marginBottom:3}}>{t.text}</div>
                               <div style={{display:'flex',gap:4,flexWrap:'wrap',alignItems:'center'}}>
-                                {t.assigned_to && <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.assigned_to}</span>}
+                                {t.assigned_to && <span style={{fontSize:10,fontWeight:500,color:personColor[t.assigned_to]||'var(--color-text-secondary)',background:personBg[t.assigned_to]||'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.assigned_to}</span>}
                                 {t.due_label && <span style={{fontSize:10,color:'var(--color-text-secondary)'}}>{t.due_label}</span>}
                                 <span style={{fontSize:10,color:priorityColors[t.priority||'medium'],background:priorityBg[t.priority||'medium'],borderRadius:99,padding:'1px 6px',textTransform:'capitalize'}}>{t.priority||'medium'}</span>
                                 <span style={{fontSize:10,color:'var(--color-text-secondary)',background:'var(--color-background-secondary)',borderRadius:99,padding:'1px 6px'}}>{t.points||1}pt</span>
