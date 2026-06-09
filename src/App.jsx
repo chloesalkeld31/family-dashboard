@@ -173,7 +173,8 @@ export default function App() {
   const [contribAmount, setContribAmount] = useState('')
   const [contribPerson, setContribPerson] = useState('Chloe')
   const [completionPicker, setCompletionPicker] = useState(null)
-  const [archiveOpen, setArchiveOpen] = useState(false) // todo waiting for completer
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [pointsBreakdown, setPointsBreakdown] = useState(null) // {person, tasks} // todo waiting for completer
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -1527,6 +1528,57 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* Points breakdown popup */}
+          {pointsBreakdown && (
+            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'1rem'}} onClick={()=>setPointsBreakdown(null)}>
+              <div style={{background:'var(--color-background-primary)',borderRadius:'var(--border-radius-lg)',padding:'1.5rem',width:'100%',maxWidth:340,maxHeight:'70vh',overflow:'auto',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}} onClick={e=>e.stopPropagation()}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:500,color:pointsBreakdown.color}}>{pointsBreakdown.person}</div>
+                    <div style={{fontSize:12,color:'var(--color-text-secondary)'}}>
+                      {pointsBreakdown.tasks.reduce((s,t)=>s+(t.points||1),0)} pts this month · {pointsBreakdown.tasks.length} tasks
+                    </div>
+                  </div>
+                  <button onClick={()=>setPointsBreakdown(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'var(--color-text-secondary)',padding:4}}>
+                    <i className="ti ti-x" aria-hidden="true"></i>
+                  </button>
+                </div>
+                {pointsBreakdown.tasks.length === 0 && (
+                  <div style={{fontSize:13,color:'var(--color-text-secondary)',textAlign:'center',padding:'1rem 0'}}>No completed tasks yet this month</div>
+                )}
+                {(() => {
+                  const byCat = {}
+                  pointsBreakdown.tasks.forEach(t => {
+                    const cat = t.category || 'General'
+                    if (!byCat[cat]) byCat[cat] = []
+                    byCat[cat].push(t)
+                  })
+                  return Object.entries(byCat).map(([cat, tasks]) => (
+                    <div key={cat} style={{marginBottom:12}}>
+                      <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:6,display:'flex',justifyContent:'space-between'}}>
+                        <span>{cat}</span>
+                        <span>{tasks.reduce((s,t)=>s+(t.points||1),0)}pt</span>
+                      </div>
+                      {tasks.map(t => (
+                        <div key={t.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,color:'var(--color-text-primary)',opacity:0.7}}>{t.text}</div>
+                            <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>
+                              {t.archived_at ? new Date(t.archived_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''}
+                              {t.priority && <span style={{marginLeft:6,textTransform:'capitalize'}}>{t.priority}</span>}
+                            </div>
+                          </div>
+                          <span style={{fontSize:12,fontWeight:500,color:pointsBreakdown.color,flexShrink:0,marginLeft:8}}>{t.points||1}pt</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                })()}
+              </div>
+            </div>
+          )}
+
           {(() => {
             const now = new Date()
             const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -1553,15 +1605,18 @@ export default function App() {
                   {now.toLocaleDateString('en-US',{month:'long'})} leaderboard
                 </div>
                 <div style={{display:'flex',gap:8,marginBottom:10}}>
-                  {[['Chloe', chloePoints, '#AD5B7F'], ['Chase', chasePoints, '#1565C0']].map(([name, pts, color]) => (
-                    <div key={name} style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
-                      <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:2}}>{name}</div>
-                      <div style={{fontSize:22,fontWeight:500,color}}>{pts}</div>
-                      <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>pts this month</div>
-                    </div>
-                  ))}
+                  {[['Chloe', chloePoints, '#AD5B7F'], ['Chase', chasePoints, '#1565C0']].map(([name, pts, color]) => {
+                    const personTasks = monthDone.filter(t => t.assigned_to === name)
+                    return (
+                      <button key={name} onClick={()=>setPointsBreakdown({person:name, color, tasks:personTasks})}
+                        style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px',border:'none',cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}>
+                        <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:2}}>{name}</div>
+                        <div style={{fontSize:22,fontWeight:500,color}}>{pts}</div>
+                        <div style={{fontSize:11,color:'var(--color-text-secondary)'}}>pts · tap to see tasks</div>
+                      </button>
+                    )
+                  })}
                 </div>
-                {total > 0 && (
                   <div style={{height:6,borderRadius:99,background:'var(--color-background-secondary)',overflow:'hidden',display:'flex'}}>
                     <div style={{width:`${chloePct}%`,background:'#AD5B7F',transition:'width 0.3s'}}></div>
                     <div style={{flex:1,background:'#1565C0'}}></div>
