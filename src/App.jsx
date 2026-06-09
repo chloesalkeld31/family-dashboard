@@ -172,7 +172,8 @@ export default function App() {
   const [contributions, setContributions] = useState([])
   const [contribAmount, setContribAmount] = useState('')
   const [contribPerson, setContribPerson] = useState('Chloe')
-  const [completionPicker, setCompletionPicker] = useState(null) // todo waiting for completer
+  const [completionPicker, setCompletionPicker] = useState(null)
+  const [archiveOpen, setArchiveOpen] = useState(false) // todo waiting for completer
   const [activeShoppingList, setActiveShoppingList] = useState('grocery')
   const [store, setStore] = useState('grocery')
   const [customSpend, setCustomSpend] = useState('')
@@ -226,7 +227,41 @@ export default function App() {
     if (cc.data) setCards(cc.data.map(c => ({...c, balance: parseFloat(c.balance), statement_balance: c.statement_balance != null ? parseFloat(c.statement_balance) : parseFloat(c.balance), statement_close_day: c.statement_close_day ? parseInt(c.statement_close_day) : null, history_1mo: c.history_1mo != null ? parseFloat(c.history_1mo) : null, history_2mo: c.history_2mo != null ? parseFloat(c.history_2mo) : null, history_3mo: c.history_3mo != null ? parseFloat(c.history_3mo) : null})))
     if (fx.data) setFixed(fx.data.map(f => ({...f, amount: parseFloat(f.amount), extra_payment: parseFloat(f.extra_payment||0), paid_this_month: f.paid_this_month || false})))
     if (vx.data) setVariable(vx.data.map(v => ({...v, current_bill: v.current_bill != null ? parseFloat(v.current_bill) : null, history: typeof v.history === 'string' ? JSON.parse(v.history) : v.history})))
-    if (td.data) setTodos(td.data)
+    if (td.data) {
+      // Reset recurring tasks based on their cadence
+      const now = new Date()
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const dayOfWeek = now.getDay()
+      const startOfWeek = new Date(startOfToday)
+      startOfWeek.setDate(startOfToday.getDate() - dayOfWeek) // last Sunday
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+
+      const toReset = td.data.filter(t => {
+        if (!t.recurring || t.recurring === 'none') return false
+        if (t.status !== 'done') return false
+        if (!t.archived_at) return false
+        const completedAt = new Date(t.archived_at)
+        if (t.recurring === 'daily') return completedAt < startOfToday
+        if (t.recurring === 'weekly') return completedAt < startOfWeek
+        if (t.recurring === 'monthly') return completedAt < startOfMonth
+        return false
+      })
+
+      if (toReset.length > 0) {
+        await Promise.all(toReset.map(t =>
+          supabase.from('todos').update({
+            status: 'todo',
+            archived_at: null,
+            updated_at: new Date()
+          }).eq('id', t.id)
+        ))
+        // Reload fresh todos after reset
+        const { data: freshTodos } = await supabase.from('todos').select('*').order('created_at')
+        if (freshTodos) setTodos(freshTodos)
+      } else {
+        setTodos(td.data)
+      }
+    }
     if (sl.data) setShoppingList(sl.data)
     if (pa.data) {
       setPlaidAccounts(pa.data)
@@ -1446,13 +1481,47 @@ export default function App() {
                 <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>Who completed this?</div>
                 <div style={{fontSize:13,color:'var(--color-text-secondary)',marginBottom:16}}>{completionPicker.text}</div>
                 <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  {['Chloe','Chase','Both'].map(person => (
+                  {['Chloe','Chase'].map(person => (
                     <button key={person} onClick={()=>setTodoStatus(completionPicker,'done',person)}
                       style={{padding:'12px',borderRadius:'var(--border-radius-md)',border:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-secondary)',cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:500,color:'var(--color-text-primary)',textAlign:'left'}}>
-                      {person}
-                      {person !== 'Both' && <span style={{fontSize:11,color:'var(--color-text-secondary)',fontWeight:400,marginLeft:8}}>+{completionPicker.points||1} pt</span>}
+                      {person} completed it
+                      <span style={{fontSize:11,color:'var(--color-text-secondary)',fontWeight:400,marginLeft:8}}>+{completionPicker.points||1} pt</span>
                     </button>
                   ))}
+                  {/* Joint task option — stay open for other person */}
+                  {(completionPicker.assigned_to === 'Both' || !completionPicker.assigned_to) && (
+                    <>
+                      <div style={{fontSize:11,color:'var(--color-text-secondary)',textAlign:'center',margin:'4px 0'}}>— or —</div>
+                      {['Chloe','Chase'].map(person => {
+                        const other = person === 'Chloe' ? 'Chase' : 'Chloe'
+                        return (
+                          <button key={'joint_'+person} onClick={async ()=>{
+                            // Award points to person, reassign to other so they can complete too
+                            await supabase.from('todos').update({
+                              assigned_to: other,
+                              updated_at: new Date()
+                            }).eq('id', completionPicker.id)
+                            // Also log this completion in archive as a copy
+                            await supabase.from('todos').insert({
+                              text: completionPicker.text + ' ✓ ' + person,
+                              status: 'done',
+                              assigned_to: person,
+                              points: completionPicker.points || 1,
+                              priority: completionPicker.priority,
+                              category: completionPicker.category,
+                              archived_at: new Date(),
+                              recurring: 'none',
+                            })
+                            setCompletionPicker(null)
+                            await loadAll(false)
+                          }}
+                            style={{padding:'10px 12px',borderRadius:'var(--border-radius-md)',border:'0.5px dashed var(--color-border-tertiary)',background:'var(--color-background-primary)',cursor:'pointer',fontFamily:'inherit',fontSize:13,color:'var(--color-text-secondary)',textAlign:'left'}}>
+                            {person} completed it — keep open for {other}
+                          </button>
+                        )
+                      })}
+                    </>
+                  )}
                 </div>
                 <button onClick={()=>setCompletionPicker(null)} style={{marginTop:12,width:'100%',padding:'8px',borderRadius:'var(--border-radius-md)',border:'none',background:'none',cursor:'pointer',fontSize:13,color:'var(--color-text-secondary)',fontFamily:'inherit'}}>Cancel</button>
               </div>
@@ -1484,7 +1553,7 @@ export default function App() {
                   {now.toLocaleDateString('en-US',{month:'long'})} leaderboard
                 </div>
                 <div style={{display:'flex',gap:8,marginBottom:10}}>
-                  {[['Chloe', chloePoints, '#C2185B'], ['Chase', chasePoints, '#1565C0']].map(([name, pts, color]) => (
+                  {[['Chloe', chloePoints, '#AD5B7F'], ['Chase', chasePoints, '#1565C0']].map(([name, pts, color]) => (
                     <div key={name} style={{flex:1,background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
                       <div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:2}}>{name}</div>
                       <div style={{fontSize:22,fontWeight:500,color}}>{pts}</div>
@@ -1494,7 +1563,7 @@ export default function App() {
                 </div>
                 {total > 0 && (
                   <div style={{height:6,borderRadius:99,background:'var(--color-background-secondary)',overflow:'hidden',display:'flex'}}>
-                    <div style={{width:`${chloePct}%`,background:'#C2185B',transition:'width 0.3s'}}></div>
+                    <div style={{width:`${chloePct}%`,background:'#AD5B7F',transition:'width 0.3s'}}></div>
                     <div style={{flex:1,background:'#1565C0'}}></div>
                   </div>
                 )}
@@ -1513,7 +1582,7 @@ export default function App() {
                       <div key={cat} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
                         <span style={{fontSize:12,color:'var(--color-text-primary)',fontWeight:500}}>{cat}</span>
                         <div style={{display:'flex',gap:12}}>
-                          {pts.Chloe > 0 && <span style={{fontSize:11,color:'#C2185B'}}>Chloe {pts.Chloe}pt</span>}
+                          {pts.Chloe > 0 && <span style={{fontSize:11,color:'#AD5B7F'}}>Chloe {pts.Chloe}pt</span>}
                           {pts.Chase > 0 && <span style={{fontSize:11,color:'#1565C0'}}>Chase {pts.Chase}pt</span>}
                         </div>
                       </div>
@@ -1679,8 +1748,8 @@ export default function App() {
 
               const priorityColors = { high: '#D85A30', medium: '#BA7517', low: '#185FA5' }
               const priorityBg = { high: '#FCEBEB', medium: '#FAEEDA', low: '#EEF4FC' }
-              const personColor = { Chloe: '#C2185B', Chase: '#1565C0', Both: '#5F5E5A' }
-              const personBg = { Chloe: '#FCE4EC', Chase: '#E3F2FD', Both: '#F1EFE8' }
+              const personColor = { Chloe: '#AD5B7F', Chase: '#1565C0', Both: '#5F5E5A' }
+              const personBg = { Chloe: '#FAE8F1', Chase: '#E3F2FD', Both: '#F1EFE8' }
 
               const statusOptions = [
                 { value: 'todo', label: 'To do' },
@@ -1781,30 +1850,36 @@ export default function App() {
                   ))}
 
                   {/* Archive */}
-                  {archivedTodos.length > 0 && (() => {
-                    const archivedByWeek = archivedTodos.reduce((groups, t) => {
-                      const d = new Date(t.archived_at)
-                      const weekStart = new Date(d)
-                      weekStart.setDate(d.getDate() - d.getDay())
-                      weekStart.setHours(0,0,0,0)
-                      const key = weekStart.toISOString()
-                      const label = `Week of ${weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
-                      if (!groups[key]) groups[key] = { label, items: [] }
-                      groups[key].items.push(t)
-                      return groups
-                    }, {})
-                    return (
-                      <div style={{marginTop:16}}>
-                        <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>Archive</div>
-                        {Object.entries(archivedByWeek).sort((a,b)=>b[0].localeCompare(a[0])).map(([key,week]) => (
+                  {archivedTodos.length > 0 && (
+                    <div style={{marginTop:16}}>
+                      <button onClick={()=>setArchiveOpen(o=>!o)}
+                        style={{display:'flex',justifyContent:'space-between',alignItems:'center',width:'100%',background:'none',border:'none',cursor:'pointer',padding:'6px 0',fontFamily:'inherit'}}>
+                        <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',textTransform:'uppercase',letterSpacing:'0.5px'}}>
+                          Archive ({archivedTodos.length})
+                        </div>
+                        <i className={`ti ${archiveOpen?'ti-chevron-up':'ti-chevron-down'}`} style={{fontSize:13,color:'var(--color-text-secondary)'}} aria-hidden="true"></i>
+                      </button>
+                      {archiveOpen && (() => {
+                        const archivedByWeek = archivedTodos.reduce((groups, t) => {
+                          const d = new Date(t.archived_at)
+                          const weekStart = new Date(d)
+                          weekStart.setDate(d.getDate() - d.getDay())
+                          weekStart.setHours(0,0,0,0)
+                          const key = weekStart.toISOString()
+                          const label = `Week of ${weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
+                          if (!groups[key]) groups[key] = { label, items: [] }
+                          groups[key].items.push(t)
+                          return groups
+                        }, {})
+                        return Object.entries(archivedByWeek).sort((a,b)=>b[0].localeCompare(a[0])).map(([key,week]) => (
                           <div key={key} style={{marginBottom:12}}>
-                            <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:6}}>{week.label}</div>
+                            <div style={{fontSize:12,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:6,paddingTop:4}}>{week.label}</div>
                             {week.items.map(t => (
                               <div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 0',borderBottom:'0.5px solid var(--color-border-tertiary)',opacity:0.5}}>
                                 <div style={{flex:1}}>
                                   <div style={{fontSize:13,textDecoration:'line-through',color:'var(--color-text-secondary)'}}>{t.text}</div>
                                   <div style={{fontSize:11,color:'var(--color-text-secondary)',display:'flex',gap:4}}>
-                                    {t.assigned_to && <span>{t.assigned_to}</span>}
+                                    {t.assigned_to && <span style={{color:personColor[t.assigned_to]||'var(--color-text-secondary)'}}>{t.assigned_to}</span>}
                                     <span>{t.points||1}pt</span>
                                   </div>
                                 </div>
@@ -1814,10 +1889,10 @@ export default function App() {
                               </div>
                             ))}
                           </div>
-                        ))}
-                      </div>
-                    )
-                  })()}
+                        ))
+                      })()}
+                    </div>
+                  )}
                 </>
               )
             })()}
