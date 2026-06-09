@@ -1617,6 +1617,7 @@ export default function App() {
                     )
                   })}
                 </div>
+                {total > 0 && (
                   <div style={{height:6,borderRadius:99,background:'var(--color-background-secondary)',overflow:'hidden',display:'flex'}}>
                     <div style={{width:`${chloePct}%`,background:'#AD5B7F',transition:'width 0.3s'}}></div>
                     <div style={{flex:1,background:'#1565C0'}}></div>
